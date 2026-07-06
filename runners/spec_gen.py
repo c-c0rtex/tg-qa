@@ -137,14 +137,17 @@ def parse_spec_yaml(raw: str) -> tuple[dict | None, str | None]:
 
 
 def gen_one(tc: dict, bot_context: str, bot_map: dict, probe: bool) -> tuple[dict | None, str | None, list[str]]:
-    """(spec, fatal_error, probe_warnings) — one retry covers schema AND probe misses."""
+    """(spec, fatal_error, probe_warnings) — one retry covers schema AND probe misses.
+    An LLM-mined map is weaker ground truth: misses against it are reported but never
+    burn the retry (the map itself may be the one hallucinating)."""
+    strict_map = bot_map.get("mined_by") != "llm"
     prompt = PROMPT.format(bot_context=bot_context, tc_id=tc["id"], tc_title=tc["title"],
                            tc_body=tc["body"].strip(), tc_slug=slugify(tc["id"]))
     raw = call_claude(prompt)
     spec, err = parse_spec_yaml(raw)
     warnings = probe_spec(spec, bot_map) if spec and probe else []
 
-    if err or warnings:
+    if err or (warnings and strict_map):
         feedback = err or ("the runner probed your spec against the REAL bot map:\n- "
                            + "\n- ".join(warnings)
                            + "\nUse only mined commands/captions — EXCEPTION: keep a step "

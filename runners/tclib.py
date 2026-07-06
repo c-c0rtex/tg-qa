@@ -79,6 +79,13 @@ def slugify(s: str) -> str:
     return s[:60] or "tc"
 
 
+def strip_fences(out: str) -> str:
+    """Remove a wrapping ``` fence (any language tag) the model added despite orders."""
+    out = out.strip()
+    out = re.sub(r"^```[a-zA-Z]*\s*\n?", "", out)
+    return re.sub(r"\n?```\s*$", "", out)
+
+
 def call_claude(prompt: str, timeout: int | None = None) -> str:
     """`claude -p <prompt>` → stdout. TGQA_CLAUDE_MODEL overrides the model,
     TGQA_GEN_TIMEOUT (default 300 s) bounds one generation. Strips stray fences."""
@@ -90,7 +97,4 @@ def call_claude(prompt: str, timeout: int | None = None) -> str:
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(f"claude CLI failed (exit {proc.returncode}): {proc.stderr[:500]}")
-    out = proc.stdout.strip()
-    out = re.sub(r"^```(?:yaml|yml|markdown|md)?\s*\n?", "", out)
-    out = re.sub(r"\n?```\s*$", "", out)
-    return out
+    return strip_fences(proc.stdout)

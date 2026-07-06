@@ -20,9 +20,13 @@ user session (.session) ◀──core/driver.py──▶ Telegram ◀──run�
 ```
 
 - **Source of truth is the bot's code**: commands, callback handlers, keyboards and reply
-  texts are mined from the repo (node-telegram-bot-api / aiogram first), so expected
-  results come from real strings, not model guesses. The live bot is used to *verify*
-  the map, not to invent it.
+  texts are mined from the repo, so expected results come from real strings, not model
+  guesses. Known frameworks (node-telegram-bot-api, aiogram) get a free deterministic
+  pass with `file:line` sources; **any other language/framework** falls back to LLM
+  mining — files are shortlisted by Bot API protocol tokens (`sendMessage`,
+  `inline_keyboard`… are the same strings in Go, Rust or PHP) and the model fills the
+  same map schema quoting strings verbatim. `--llm-augment` runs both. The live bot is
+  used to *verify* the map, not to invent it.
 - **Specs are declarative YAML**, executed by a deterministic runner over the Telethon
   driver: send / click / expect (reply within timeout, text snapshot with masks,
   keyboard snapshot, media type). No LLM in the loop at run time.

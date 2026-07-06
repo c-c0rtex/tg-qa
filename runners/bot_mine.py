@@ -1,25 +1,32 @@
 """Mine the bot map from the bot's SOURCE CODE — the source of truth for generation.
 
-Deterministic (regex + bracket matching), no LLM: commands, callback handlers, inline
-keyboards (text / callback_data / web_app), and reply texts are extracted from string
-literals in the repo. Generated scenarios then assert against the bot's real strings
-instead of model guesses; the live bot is only used to VERIFY this map (probe), not to
-invent it.
+Two mining paths, one map schema (commands / callbacks / keyboards / replies):
 
-Framework adapters (detected from manifest dependencies, deepest manifest wins):
+  DETERMINISTIC (fast path, known frameworks) — regex + bracket matching, no LLM,
+  reproducible, `file:line` sources:
   - node-telegram-bot-api  (JS/TS): onText(/regex/), switch/case + === on msg.text,
     callback_data literals, inline_keyboard blocks, sendMessage texts
   - aiogram v3             (Python): Command()/CommandStart(), F.data filters,
     InlineKeyboardButton, answer()/reply()/send_message()/edit_text() texts
 
-Honest limits: only static string/template literals are mined. Texts built from i18n
-tables, databases or concatenation are invisible here — the Explore phase supplements
-the map by reading the code with the model and by talking to the live bot. Template
-placeholders are normalized to `{name}` so snapshots can mask them.
+  LLM (universal path) — any language/framework: files are shortlisted by the
+  Bot API protocol tokens they contain (`sendMessage`, `inline_keyboard`,
+  `callback_data`… are the same strings in Go, Rust, PHP or a hand-rolled wrapper),
+  then the model reads them and fills the SAME JSON schema, quoting strings verbatim.
+  Used automatically when no known framework is detected, forced with --llm, or run
+  ON TOP of the deterministic pass with --llm-augment (picks up i18n tables,
+  concatenations, texts in constants the regexes can't see).
+
+  A map whose top-level `mined_by` is "llm" is treated as WEAKER ground truth
+  downstream: spec_gen's probe reports misses against it but does not burn a
+  generation retry on them.
+
+Honest limits of the deterministic pass: only static string/template literals.
+Template placeholders are normalized to `{name}` so snapshots can mask them.
 
 Usage:
   bot_mine.py --project <alias>            # bot_source_dir from .tg-qa/config.json
-  bot_mine.py --source-dir <path> [--framework node-telegram-bot-api|aiogram] [--out map.json]
+  bot_mine.py --source-dir <path> [--framework ...] [--llm | --llm-augment] [--out map.json]
 """
 
 from __future__ import annotations
@@ -246,6 +253,152 @@ def mine_py_file(path: Path, rel: str, out: dict) -> None:
         out["keyboards"].append({"buttons": buttons, "source": rel})
 
 
+# --- LLM mining (universal path) ---------------------------------------------------
+
+# Bot API protocol tokens — identical strings in every language, because they ARE the
+# wire protocol. A file mentioning them is bot-dialog code regardless of framework.
+BOT_API_TOKENS = ("sendMessage", "send_message", "inline_keyboard", "callback_data",
+                  "answerCallbackQuery", "answer_callback_query", "reply_markup",
+                  "web_app", "WebAppInfo", "onText", "setMyCommands", "set_my_commands",
+                  "InlineKeyboardButton", "editMessageText", "edit_message_text",
+                  "pre_checkout_query", "sendInvoice", "send_invoice")
+
+CODE_EXTS = (".ts", ".js", ".mjs", ".cjs", ".py", ".go", ".rs", ".rb", ".php",
+             ".java", ".kt", ".cs", ".ex", ".exs", ".lua", ".swift", ".dart")
+
+MAX_LLM_FILES = 20
+MAX_FILE_CHARS = 12_000
+MAX_TOTAL_CHARS = 60_000
+
+LLM_MINE_PROMPT = """You are building a TEST MAP of a Telegram bot from its source code.
+Below are the bot's dialog-handling files. Extract ONLY what is literally in the code —
+never invent or paraphrase.
+
+OUTPUT: a single JSON object, no fences, no commentary, exactly this schema:
+{{
+  "commands":  [{{"command": "/start", "source": "<file path>"}}],
+  "callbacks": [{{"data": "<callback_data value>", "source": "<file path>"}}],
+  "keyboards": [{{"buttons": [{{"text": "<caption>", "callback_data": "<optional>",
+                               "web_app": true, "url": "<optional>"}}],
+                 "source": "<file path>"}}],
+  "replies":   [{{"text": "<reply text VERBATIM>", "source": "<file path>"}}]
+}}
+
+RULES:
+- Quote reply texts and button captions VERBATIM (emoji, punctuation, newlines as \\n).
+- Replace dynamic interpolations with a {{name}} placeholder (e.g. "Hi {{username}}").
+- Include texts assembled from i18n tables/constants when the literal is visible in
+  the provided files; if a text lives outside these files, SKIP it — do not guess.
+- "web_app": true only for buttons that open a Mini App; omit the key otherwise.
+- Empty categories stay as empty arrays.
+
+FILES:
+{files_section}
+"""
+
+
+def candidate_files(root: Path) -> list[tuple[Path, str]]:
+    """Shortlist dialog-handling files by Bot API token density — language-agnostic."""
+    hits: list[tuple[int, Path, str]] = []
+    for f in source_files(root, CODE_EXTS):
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        score = sum(text.count(tok) for tok in BOT_API_TOKENS)
+        if score:
+            hits.append((score, f, text))
+    hits.sort(key=lambda h: -h[0])
+    return [(f, text) for _, f, text in hits[:MAX_LLM_FILES]]
+
+
+def validate_llm_map(data) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(data, dict):
+        return ["not a JSON object"]
+    checks = {"commands": "command", "callbacks": "data", "replies": "text"}
+    for key, field in checks.items():
+        for i, item in enumerate(data.get(key) or []):
+            if not isinstance(item, dict) or not item.get(field):
+                errors.append(f"{key}[{i}]: missing `{field}`")
+    for i, kb in enumerate(data.get("keyboards") or []):
+        if not isinstance(kb, dict) or not isinstance(kb.get("buttons"), list):
+            errors.append(f"keyboards[{i}]: missing `buttons` list")
+            continue
+        for j, b in enumerate(kb["buttons"]):
+            if not isinstance(b, dict) or not b.get("text"):
+                errors.append(f"keyboards[{i}].buttons[{j}]: missing `text`")
+    return errors
+
+
+def llm_mine(source_dir: Path, scan_root: Path) -> dict:
+    """Model-read map for any language. One retry on malformed output."""
+    import json as _json
+
+    from tclib import call_claude
+
+    files = candidate_files(scan_root)
+    if not files:
+        raise SystemExit(f"no files under {scan_root} mention Bot API tokens "
+                         f"({', '.join(BOT_API_TOKENS[:4])}…) — is this really a bot repo?")
+    sections, total = [], 0
+    for f, text in files:
+        chunk = text[:MAX_FILE_CHARS]
+        if total + len(chunk) > MAX_TOTAL_CHARS:
+            break
+        total += len(chunk)
+        sections.append(f"--- {f.relative_to(source_dir)} ---\n{chunk}")
+    prompt = LLM_MINE_PROMPT.format(files_section="\n\n".join(sections))
+
+    raw = call_claude(prompt)
+    for attempt in range(2):
+        try:
+            data = _json.loads(raw)
+            errors = validate_llm_map(data)
+        except _json.JSONDecodeError as e:
+            data, errors = None, [f"JSON parse error: {e}"]
+        if not errors:
+            break
+        if attempt == 0:
+            raw = call_claude(prompt + "\n\nYOUR PREVIOUS OUTPUT WAS REJECTED:\n- "
+                              + "\n- ".join(errors)
+                              + "\nOutput the FULL corrected JSON object (no fences):")
+    else:
+        raise SystemExit("LLM mining failed twice: " + "; ".join(errors))
+
+    out = {"framework": "llm", "source_dir": str(source_dir), "mined_by": "llm",
+           "commands": data.get("commands") or [], "callbacks": data.get("callbacks") or [],
+           "keyboards": data.get("keyboards") or [], "replies": data.get("replies") or []}
+    for c in out["commands"]:
+        if not str(c["command"]).startswith("/"):
+            c["command"] = "/" + str(c["command"])
+    return out
+
+
+def merge_maps(det: dict, llm: dict) -> dict:
+    """--llm-augment: deterministic map stays authoritative (map-level mined_by keeps
+    the strict probe), LLM entries fill the gaps and are marked per-entry."""
+    out = dict(det)
+    out["mined_by"] = "deterministic+llm"
+    known_cmds = {c["command"] for c in det["commands"]}
+    known_data = {c["data"] for c in det["callbacks"]}
+    known_replies = {r["text"] for r in det["replies"]}
+    kb_keys = {tuple(b["text"] for b in kb["buttons"]) for kb in det["keyboards"]}
+    for c in llm["commands"]:
+        if c["command"] not in known_cmds:
+            out["commands"].append({**c, "mined_by": "llm"})
+    for c in llm["callbacks"]:
+        if c["data"] not in known_data:
+            out["callbacks"].append({**c, "mined_by": "llm"})
+    for r in llm["replies"]:
+        if r["text"] not in known_replies:
+            out["replies"].append({**r, "mined_by": "llm"})
+    for kb in llm["keyboards"]:
+        if tuple(b.get("text") for b in kb["buttons"]) not in kb_keys:
+            out["keyboards"].append({**kb, "mined_by": "llm"})
+    return out
+
+
 # --- orchestration ---------------------------------------------------------------
 
 JS_LIKE = {"node-telegram-bot-api", "grammy", "telegraf"}
@@ -263,13 +416,23 @@ def dedupe(items: list[dict], key: str) -> list[dict]:
     return out
 
 
-def mine(source_dir: Path, framework: str | None = None) -> dict:
+def mine(source_dir: Path, framework: str | None = None, mode: str | None = None) -> dict:
+    """mode: None (auto: deterministic for known frameworks, LLM otherwise),
+    "llm" (force LLM), "augment" (deterministic + LLM supplement)."""
     fw, fw_dir = (framework, source_dir) if framework else detect_framework(source_dir)
-    if fw is None:
-        raise SystemExit(f"No known bot framework found under {source_dir} — "
-                         "pass --framework explicitly if the dependency is indirect")
     scan_root = fw_dir or source_dir
-    out: dict = {"framework": fw, "source_dir": str(source_dir),
+
+    if mode == "llm" or (fw is None and mode != "augment"):
+        if fw is None and mode != "llm":
+            print(f"[mine] no known framework under {source_dir} — falling back to LLM mining",
+                  file=sys.stderr)
+        out = llm_mine(source_dir, scan_root)
+        return _finalize(out)
+    if fw is None:
+        raise SystemExit(f"--llm-augment needs a detectable framework under {source_dir}; "
+                         "use --llm for framework-less repos")
+
+    out: dict = {"framework": fw, "source_dir": str(source_dir), "mined_by": "deterministic",
                  "commands": [], "callbacks": [], "keyboards": [], "replies": []}
     if fw not in FULLY_SUPPORTED:
         out["warning"] = (f"framework '{fw}' detected but only heuristically supported "
@@ -281,6 +444,12 @@ def mine(source_dir: Path, framework: str | None = None) -> dict:
         for f in source_files(scan_root, (".py",)):
             mine_py_file(f, str(f.relative_to(source_dir)), out)
 
+    if mode == "augment":
+        out = merge_maps(out, llm_mine(source_dir, scan_root))
+    return _finalize(out)
+
+
+def _finalize(out: dict) -> dict:
     out["commands"] = dedupe(out["commands"], "command")
     out["callbacks"] = dedupe(out["callbacks"], "data")
     out["replies"] = dedupe(out["replies"], "text")
@@ -291,8 +460,12 @@ def mine(source_dir: Path, framework: str | None = None) -> dict:
 def render_context_section(bot_map: dict) -> str:
     """Markdown section for bot.context.md — what generation agents actually read."""
     lines = ["## Mined from source", ""]
-    lines.append(f"Framework: `{bot_map['framework']}` — mined deterministically; "
-                 "dynamic/i18n texts are NOT here.")
+    if bot_map.get("mined_by") == "llm":
+        lines.append(f"Framework: `{bot_map['framework']}` — mined by an LLM reading the "
+                     "source: verify captions against the live bot before trusting exact matches.")
+    else:
+        lines.append(f"Framework: `{bot_map['framework']}` — mined deterministically; "
+                     "dynamic/i18n texts are NOT here.")
     lines.append("")
     lines.append("### Commands")
     for c in bot_map["commands"] or []:
@@ -331,6 +504,11 @@ def main() -> int:
     ap.add_argument("--project", help="registry alias (uses .tg-qa/config.json bot_source_dir)")
     ap.add_argument("--source-dir", help="bot source dir (overrides config)")
     ap.add_argument("--framework", help="skip detection")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--llm", action="store_true",
+                      help="force LLM mining (any language/framework)")
+    mode.add_argument("--llm-augment", action="store_true",
+                      help="deterministic pass + LLM supplement (i18n tables, constants)")
     ap.add_argument("--out", help="write map JSON here (default: <project>/.tg-qa/bot.map.json)")
     args = ap.parse_args()
 
@@ -346,7 +524,8 @@ def main() -> int:
     if not src_path.is_dir():
         raise SystemExit(f"source dir not found: {src_path}")
 
-    bot_map = mine(src_path, args.framework)
+    bot_map = mine(src_path, args.framework,
+                   mode="llm" if args.llm else "augment" if args.llm_augment else None)
 
     out_path = Path(args.out) if args.out else None
     if out_path is None and proj is None and args.project:
