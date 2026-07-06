@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Generate YAML specs from scenario TCs (validated + probed) → .tg-qa/specs/
+set -e
+SKILL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+exec uv run --project "$SKILL" python "$SKILL/runners/spec_gen.py" "$@"

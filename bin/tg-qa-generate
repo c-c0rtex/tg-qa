@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Generate scenario TCs from a task or a git diff of the bot repo → .tg-qa/scenarios/
+set -e
+SKILL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+exec uv run --project "$SKILL" python "$SKILL/runners/gen_scenarios.py" "$@"
