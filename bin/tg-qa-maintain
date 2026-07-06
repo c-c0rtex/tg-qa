@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Heal failing specs from the last run (dialog-transcript-driven) or flag product bugs.
+set -e
+SKILL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+exec uv run --project "$SKILL" python "$SKILL/runners/maintain.py" "$@"

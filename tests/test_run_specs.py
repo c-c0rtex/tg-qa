@@ -218,6 +218,57 @@ def test_run_all_role_driver_cache_and_close(tmp_path):
     assert all(d.closed for _, d in made)
 
 
+def test_run_all_passive_only_gates_mutating(tmp_path):
+    import yaml
+    specs_dir = tmp_path / "specs"
+    specs_dir.mkdir()
+    (specs_dir / "a.yaml").write_text(yaml.safe_dump(
+        {"tc": "T1", "type": "passive", "steps": [{"send": "/start", "expect": {"contains": ["hi"]}}]}))
+    (specs_dir / "b.yaml").write_text(yaml.safe_dump(
+        {"tc": "T2", "type": "mutating", "steps": [{"send": "/start"}]}))
+    (specs_dir / "c.yaml").write_text(yaml.safe_dump(          # liar: passive label, plain send
+        {"tc": "T3", "type": "passive", "steps": [{"send": "новый пост"}]}))
+
+    async def factory(proj, cfg, role):
+        return FakeDriver({("send", "/start"): [msg("hi")]})
+
+    from run_specs import Baselines
+    results = asyncio.run(run_all(sorted(specs_dir.glob("*.yaml")), {}, {}, None,
+                                  Baselines(tmp_path, False, []), driver_factory=factory,
+                                  passive_only=True))
+    assert [(r["tc"], r["status"]) for r in results] == \
+        [("T1", "pass"), ("T2", "skipped"), ("T3", "skipped")]
+
+
+def test_render_junit():
+    from run_specs import render_junit
+    xml = render_junit([
+        {"spec": "a.yaml", "tc": "T1", "role": "admin", "status": "pass"},
+        {"spec": "b.yaml", "tc": "T2", "role": None, "status": "fail",
+         "failures": ["step 1: missing text: 'x' <got>"]},
+        {"spec": "c.yaml", "tc": "T3", "role": None, "status": "skipped",
+         "skip_reason": "mutating spec under --passive-only"},
+        {"spec": "d.yaml", "tc": "T4", "role": None, "status": "error",
+         "failures": ["step 1: FloodWait"]},
+    ])
+    assert 'tests="3" failures="2"' in xml
+    assert '<testcase name="a.yaml::T1::admin"/>' in xml
+    assert "&lt;got&gt;" in xml and "<failure>" in xml
+    assert "<skipped" in xml and "<error>" in xml
+
+
+def test_fixture_cmd_hard_stop(tmp_path):
+    from run_specs import run_fixture_cmd
+    import pytest
+    with pytest.raises(SystemExit):
+        run_fixture_cmd({"path": str(tmp_path)}, {"fixture_cmd": "exit 3"})
+    run_fixture_cmd({"path": str(tmp_path)}, {"fixture_teardown_cmd": "exit 3"}, teardown=True)
+    run_fixture_cmd({"path": str(tmp_path)}, {})   # no cmd — noop
+    marker = tmp_path / "seeded"
+    run_fixture_cmd({"path": str(tmp_path)}, {"fixture_cmd": "touch seeded"})
+    assert marker.exists()
+
+
 def test_render_report_failures_and_queue(tmp_path):
     b = bl(tmp_path)
     b.created.append("start-welcome")

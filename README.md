@@ -6,8 +6,9 @@ inline keyboards, generate scenarios and specs from the bot's **source code**, a
 the whole matrix without spending LLM tokens. Sister project of
 [web-qa](https://github.com/c-c0rtex/web-qa) — same pipeline, different executor.
 
-> Status: v0.1 in development — driver core, session tooling and the MCP server are done;
-> bot-map mining, spec generation and runners are landing next.
+> Status: v0.1 in development — the full pipeline (mine → generate → spec-gen → run →
+> maintain), the MCP server and session tooling are implemented; dogfooding on the
+> Telebook demo stand is next.
 
 ## How it works
 

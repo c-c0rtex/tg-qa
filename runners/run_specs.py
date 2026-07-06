@@ -40,15 +40,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
+from xml.sax.saxutils import escape, quoteattr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "core"))
 
 from driver import BotDriver, DriverError, keyboard_texts  # noqa: E402
 from registry import find_project, load_config, resolve_api, resolve_session  # noqa: E402
+from tclib import spec_mutating_sends  # noqa: E402
 
 MASK = "▩"
 
@@ -275,13 +279,20 @@ async def run_spec(spec: dict, driver: BotDriver, timeout: float,
 
 
 async def run_all(spec_paths: list[Path], proj: dict, cfg: dict, role_override: str | None,
-                  baselines: Baselines, driver_factory=make_driver) -> list[dict]:
+                  baselines: Baselines, driver_factory=make_driver,
+                  passive_only: bool = False) -> list[dict]:
     timeout = float(cfg.get("reply_timeout") or 10)
     drivers: dict[str, BotDriver] = {}
     results: list[dict] = []
     try:
         for path in spec_paths:
             spec = load_spec(path)
+            if passive_only and not is_passive_spec(spec):
+                results.append({"spec": path.name, "tc": spec.get("tc"),
+                                "role": spec.get("role"), "status": "skipped",
+                                "failures": [], "dialog": [],
+                                "skip_reason": "mutating spec under --passive-only"})
+                continue
             role = role_override or spec.get("role")
             key = role or "__default__"
             if key not in drivers:
@@ -299,17 +310,67 @@ async def run_all(spec_paths: list[Path], proj: dict, cfg: dict, role_override: 
     return results
 
 
+# --- fixtures / gating / junit ----------------------------------------------------------
+
+def run_fixture_cmd(proj: dict, cfg: dict, teardown: bool = False) -> None:
+    """Seed (or tear down) deterministic data once per run. Non-zero exit is a hard
+    stop: running dialog tests against an unseeded stand produces noise, not signal."""
+    key = "fixture_teardown_cmd" if teardown else "fixture_cmd"
+    cmd = cfg.get(key)
+    if not cmd:
+        return
+    print(f"[fixtures] {cmd}", file=sys.stderr)
+    proc = subprocess.run(cmd, shell=True, cwd=proj.get("path") or None, timeout=600)
+    if proc.returncode != 0 and not teardown:
+        raise SystemExit(f"{key} failed with exit {proc.returncode} — refusing to run on "
+                         "an unseeded stand")
+
+
+def is_passive_spec(spec: dict) -> bool:
+    """Gate for --passive-only: the spec must DECLARE passive and carry no structural
+    mutation evidence (plain-text sends override the label, see tclib)."""
+    return (spec.get("type") or "").lower() == "passive" and not spec_mutating_sends(spec)
+
+
+def render_junit(results: list[dict]) -> str:
+    cases = []
+    failures = 0
+    for r in results:
+        bits = [r.get("spec", ""), r.get("tc") or ""]
+        if r.get("role"):
+            bits.append(r["role"])
+        name = "::".join(b for b in bits if b)
+        if r["status"] == "pass":
+            cases.append(f"  <testcase name={quoteattr(name)}/>")
+        elif r["status"] == "skipped":
+            cases.append(f"  <testcase name={quoteattr(name)}>"
+                         f"<skipped message={quoteattr(r.get('skip_reason') or '')}/></testcase>")
+        else:
+            failures += 1
+            tag = "error" if r["status"] == "error" else "failure"
+            body = escape("\n".join(r.get("failures") or []))
+            cases.append(f"  <testcase name={quoteattr(name)}>"
+                         f"<{tag}>{body}</{tag}></testcase>")
+    ran = [r for r in results if r["status"] != "skipped"]
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<testsuite name="tg-qa" tests="{len(ran)}" failures="{failures}">\n'
+            + "\n".join(cases) + "\n</testsuite>\n")
+
+
 # --- reporting ------------------------------------------------------------------------
 
 def render_report(results: list[dict], baselines: Baselines) -> str:
-    passed = sum(1 for r in results if r["status"] == "pass")
+    ran = [r for r in results if r["status"] != "skipped"]
+    passed = sum(1 for r in ran if r["status"] == "pass")
     lines = ["# tg-qa run report", "",
-             f"**{passed}/{len(results)} passed**", "",
-             "| spec | TC | role | status |", "|---|---|---|---|"]
+             f"**{passed}/{len(ran)} passed**"
+             + (f" ({len(results) - len(ran)} skipped)" if len(ran) != len(results) else ""),
+             "", "| spec | TC | role | status |", "|---|---|---|---|"]
+    icons = {"pass": "✅ pass", "skipped": "⏭ skipped"}
     for r in results:
         lines.append(f"| {r['spec']} | {r['tc']} | {r.get('role') or '-'} | "
-                     f"{'✅ pass' if r['status'] == 'pass' else '❌ ' + r['status']} |")
-    fails = [r for r in results if r["status"] != "pass"]
+                     f"{icons.get(r['status'], '❌ ' + r['status'])} |")
+    fails = [r for r in results if r["status"] not in ("pass", "skipped")]
     if fails:
         lines.append("\n## Failures\n")
         for r in fails:
@@ -341,6 +402,11 @@ def main() -> int:
     ap.add_argument("--specs", default="*.yaml", help="glob under .tg-qa/specs/ (default: all)")
     ap.add_argument("--role", help="run everything under this role (overrides per-spec role)")
     ap.add_argument("--update-baseline", action="store_true")
+    ap.add_argument("--passive-only", action="store_true",
+                    help="skip mutating specs (declared type + structural evidence)")
+    ap.add_argument("--no-fixtures", action="store_true", help="skip fixture_cmd/teardown")
+    ap.add_argument("--junit", nargs="?", const="junit.xml",
+                    help="write JUnit XML into reports/ (optional filename)")
     ap.add_argument("--json", action="store_true", help="print results.json to stdout too")
     args = ap.parse_args()
 
@@ -353,7 +419,14 @@ def main() -> int:
 
     baselines = Baselines(tg_dir / "baseline", args.update_baseline,
                           cfg.get("text_masks") or [])
-    results = asyncio.run(run_all(spec_paths, proj, cfg, args.role, baselines))
+    if not args.no_fixtures:
+        run_fixture_cmd(proj, cfg)
+    try:
+        results = asyncio.run(run_all(spec_paths, proj, cfg, args.role, baselines,
+                                      passive_only=args.passive_only))
+    finally:
+        if not args.no_fixtures:
+            run_fixture_cmd(proj, cfg, teardown=True)
 
     reports = tg_dir / "reports"
     reports.mkdir(parents=True, exist_ok=True)
@@ -362,12 +435,21 @@ def main() -> int:
     report_md = render_report(results, baselines)
     (reports / "report.md").write_text(report_md, encoding="utf-8")
     (reports / f"report-{stamp}.md").write_text(report_md, encoding="utf-8")
+    if args.junit:
+        (reports / args.junit).write_text(render_junit(results), encoding="utf-8")
+    step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if step_summary:
+        with open(step_summary, "a", encoding="utf-8") as f:
+            f.write(report_md + "\n")
 
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
-    passed = sum(1 for r in results if r["status"] == "pass")
-    print(f"{passed}/{len(results)} passed — {reports / 'report.md'}")
-    return 0 if passed == len(results) else 1
+    ran = [r for r in results if r["status"] != "skipped"]
+    passed = sum(1 for r in ran if r["status"] == "pass")
+    print(f"{passed}/{len(ran)} passed"
+          + (f", {len(results) - len(ran)} skipped" if len(ran) != len(results) else "")
+          + f" — {reports / 'report.md'}")
+    return 0 if passed == len(ran) else 1
 
 
 if __name__ == "__main__":
