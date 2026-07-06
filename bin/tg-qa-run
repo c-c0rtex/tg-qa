@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Execute YAML specs against the live bot (zero tokens) → .tg-qa/reports/
+set -e
+SKILL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+exec uv run --project "$SKILL" python "$SKILL/runners/run_specs.py" "$@"

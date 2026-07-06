@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Mine the bot map from source code → .tg-qa/bot.map.json
+set -e
+SKILL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+exec uv run --project "$SKILL" python "$SKILL/runners/bot_mine.py" "$@"
