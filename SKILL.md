@@ -8,10 +8,10 @@ description: Autonomous Telegram-bot QA — Telethon-driven E2E dialogs (send/cl
 Pipeline (mirrors web-qa; executor is a Telegram **user session**, not a browser):
 
 1. **Explore** — mine the bot's source code (`bot_mine`, commands/handlers/keyboards/reply
-   texts) into `.tg-qa/bot.map.json`: deterministic pass for node-telegram-bot-api/aiogram,
-   automatic LLM fallback for any other language (`--llm`), `--llm-augment` for i18n/dynamic
-   texts on top of the deterministic pass. Verify the map against the live bot via the MCP
-   tools (`tg_bot_commands`, `tg_send /start`).
+   texts) into `.tg-qa/bot.map.json`. LLM mining runs for EVERY framework/language by
+   default; node-telegram-bot-api/aiogram additionally get a deterministic `file:line`
+   pass merged underneath (`--no-llm` = deterministic only, zero tokens). Verify the map
+   against the live bot via the MCP tools (`tg_bot_commands`, `tg_send /start`).
 2. **Generate** — write test-case scenarios (`.tg-qa/scenarios/*.md`) from the bot map +
    the user's task or git diff. Each TC declares `**Type:** passive|mutating`.
 3. **Automate** — generate declarative YAML specs (`.tg-qa/specs/*.yaml`); validate the

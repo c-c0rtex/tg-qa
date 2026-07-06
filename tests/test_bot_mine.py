@@ -121,24 +121,24 @@ def test_detect_skips_node_modules(tmp_path):
 
 def test_mine_unknown_framework_exits(tmp_path):
     with pytest.raises(SystemExit):
-        bot_mine.mine(tmp_path)
+        bot_mine.mine(tmp_path, mode="det")
 
 
 # -- node-telegram-bot-api ---------------------------------------------------------
 
 def test_js_commands_all_styles(js_project):
-    m = bot_mine.mine(js_project)
+    m = bot_mine.mine(js_project, mode="det")
     cmds = {c["command"] for c in m["commands"]}
     assert cmds == {"/settings", "/start", "/help", "/ping"}
 
 
 def test_js_callbacks_from_keyboard_and_comparison(js_project):
-    m = bot_mine.mine(js_project)
+    m = bot_mine.mine(js_project, mode="det")
     assert {c["data"] for c in m["callbacks"]} == {"style"}
 
 
 def test_js_keyboard_buttons_and_webapp(js_project):
-    m = bot_mine.mine(js_project)
+    m = bot_mine.mine(js_project, mode="det")
     assert len(m["keyboards"]) == 1
     btns = m["keyboards"][0]["buttons"]
     assert btns[0] == {"text": "🎨 Style", "callback_data": "style"}
@@ -148,7 +148,7 @@ def test_js_keyboard_buttons_and_webapp(js_project):
 
 
 def test_js_replies_verbatim_with_escapes_and_templates(js_project):
-    m = bot_mine.mine(js_project)
+    m = bot_mine.mine(js_project, mode="det")
     texts = {r["text"] for r in m["replies"]}
     assert "Welcome! It's a demo 🏨" in texts
     assert "pong {now()}" in texts            # template normalized to a maskable slot
@@ -157,7 +157,7 @@ def test_js_replies_verbatim_with_escapes_and_templates(js_project):
 
 
 def test_js_sources_point_at_file_and_line(js_project):
-    m = bot_mine.mine(js_project)
+    m = bot_mine.mine(js_project, mode="det")
     for c in m["commands"]:
         assert c["source"].startswith("src/bot.ts:")
 
@@ -165,18 +165,18 @@ def test_js_sources_point_at_file_and_line(js_project):
 # -- aiogram ------------------------------------------------------------------------
 
 def test_aiogram_commands(py_project):
-    m = bot_mine.mine(py_project)
+    m = bot_mine.mine(py_project, mode="det")
     assert {c["command"] for c in m["commands"]} == {"/start", "/catalog"}
 
 
 def test_aiogram_callbacks_filters_and_factory(py_project):
-    m = bot_mine.mine(py_project)
+    m = bot_mine.mine(py_project, mode="det")
     data = {c["data"] for c in m["callbacks"]}
     assert {"buy:socks", "page:", "order:*"} <= data
 
 
 def test_aiogram_keyboard_and_webapp(py_project):
-    m = bot_mine.mine(py_project)
+    m = bot_mine.mine(py_project, mode="det")
     btns = m["keyboards"][0]["buttons"]
     assert {"text": "🧦 Носки", "callback_data": "buy:socks"} in btns
     assert any(b.get("web_app") and b["text"] == "🛍 Магазин" for b in btns)
@@ -184,7 +184,7 @@ def test_aiogram_keyboard_and_webapp(py_project):
 
 
 def test_aiogram_replies(py_project):
-    m = bot_mine.mine(py_project)
+    m = bot_mine.mine(py_project, mode="det")
     texts = {r["text"] for r in m["replies"]}
     assert {"Привет! Я бот-магазин 🛒", "Каталог:", "Добавлено в корзину ✅",
             "Страница обновлена"} <= texts
@@ -208,6 +208,6 @@ def test_command_from_ontext_regex():
 
 
 def test_render_context_section(js_project):
-    md = bot_mine.render_context_section(bot_mine.mine(js_project))
+    md = bot_mine.render_context_section(bot_mine.mine(js_project, mode="det"))
     assert "### Commands" in md and "`/start`" in md
     assert "web_app" in md and "Mini App button present: **yes**" in md

@@ -102,6 +102,21 @@ def test_mine_auto_falls_back_to_llm(go_project, monkeypatch):
     assert m["mined_by"] == "llm" and m["miniapp"] is False
 
 
+def test_mine_auto_augments_known_framework(tmp_path, monkeypatch):
+    (tmp_path / "requirements.txt").write_text("aiogram>=3\n")
+    (tmp_path / "h.py").write_text(
+        'from aiogram.filters import Command\n'
+        '@router.message(Command("start"))\n'
+        'async def s(m): await m.answer("Привет")\n')
+    import tclib
+    monkeypatch.setattr(tclib, "call_claude", lambda p, **kw: LLM_JSON)
+    m = bot_mine.mine(tmp_path)                          # default = det + LLM merge
+    assert m["mined_by"] == "deterministic+llm"
+    cmds = {c["command"] for c in m["commands"]}
+    assert cmds == {"/start"}                            # LLM dup of /start dropped
+    assert any(r.get("mined_by") == "llm" for r in m["replies"])
+
+
 def test_mine_llm_needs_bot_tokens(tmp_path):
     (tmp_path / "main.go").write_text("package main // nothing bot-like")
     with pytest.raises(SystemExit):

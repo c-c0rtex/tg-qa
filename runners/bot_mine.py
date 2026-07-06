@@ -9,13 +9,14 @@ Two mining paths, one map schema (commands / callbacks / keyboards / replies):
   - aiogram v3             (Python): Command()/CommandStart(), F.data filters,
     InlineKeyboardButton, answer()/reply()/send_message()/edit_text() texts
 
-  LLM (universal path) — any language/framework: files are shortlisted by the
-  Bot API protocol tokens they contain (`sendMessage`, `inline_keyboard`,
+  LLM (universal path, runs for EVERY framework by default) — files are shortlisted
+  by the Bot API protocol tokens they contain (`sendMessage`, `inline_keyboard`,
   `callback_data`… are the same strings in Go, Rust, PHP or a hand-rolled wrapper),
   then the model reads them and fills the SAME JSON schema, quoting strings verbatim.
-  Used automatically when no known framework is detected, forced with --llm, or run
-  ON TOP of the deterministic pass with --llm-augment (picks up i18n tables,
-  concatenations, texts in constants the regexes can't see).
+  For known frameworks it merges ON TOP of the deterministic pass (picks up i18n
+  tables, concatenations, texts in constants the regexes can't see); for unknown
+  ones it is the whole map. --llm skips the deterministic pass, --no-llm skips the
+  model (zero tokens, known frameworks only).
 
   A map whose top-level `mined_by` is "llm" is treated as WEAKER ground truth
   downstream: spec_gen's probe reports misses against it but does not burn a
@@ -26,7 +27,7 @@ Template placeholders are normalized to `{name}` so snapshots can mask them.
 
 Usage:
   bot_mine.py --project <alias>            # bot_source_dir from .tg-qa/config.json
-  bot_mine.py --source-dir <path> [--framework ...] [--llm | --llm-augment] [--out map.json]
+  bot_mine.py --source-dir <path> [--framework ...] [--llm | --no-llm] [--out map.json]
 """
 
 from __future__ import annotations
@@ -261,7 +262,9 @@ BOT_API_TOKENS = ("sendMessage", "send_message", "inline_keyboard", "callback_da
                   "answerCallbackQuery", "answer_callback_query", "reply_markup",
                   "web_app", "WebAppInfo", "onText", "setMyCommands", "set_my_commands",
                   "InlineKeyboardButton", "editMessageText", "edit_message_text",
-                  "pre_checkout_query", "sendInvoice", "send_invoice")
+                  "pre_checkout_query", "sendInvoice", "send_invoice",
+                  # framework idioms that appear even when raw API names don't
+                  "Command(", "CommandStart", ".answer(", "F.data", "callback_query")
 
 CODE_EXTS = (".ts", ".js", ".mjs", ".cjs", ".py", ".go", ".rs", ".rb", ".php",
              ".java", ".kt", ".cs", ".ex", ".exs", ".lua", ".swift", ".dart")
@@ -416,21 +419,26 @@ def dedupe(items: list[dict], key: str) -> list[dict]:
     return out
 
 
-def mine(source_dir: Path, framework: str | None = None, mode: str | None = None) -> dict:
-    """mode: None (auto: deterministic for known frameworks, LLM otherwise),
-    "llm" (force LLM), "augment" (deterministic + LLM supplement)."""
+def mine(source_dir: Path, framework: str | None = None, mode: str = "auto") -> dict:
+    """mode:
+      "auto" (default) — LLM mining for EVERY framework: deterministic pass first when
+              the framework is known (free, `file:line` sources), then an LLM pass
+              merged on top (i18n tables, constants, dynamic texts); pure LLM when no
+              framework is detected.
+      "llm"  — LLM only (skip the deterministic pass even for known frameworks).
+      "det"  — deterministic only, zero tokens (--no-llm; refuses unknown frameworks).
+    """
     fw, fw_dir = (framework, source_dir) if framework else detect_framework(source_dir)
     scan_root = fw_dir or source_dir
 
-    if mode == "llm" or (fw is None and mode != "augment"):
+    if mode == "llm" or (fw is None and mode != "det"):
         if fw is None and mode != "llm":
-            print(f"[mine] no known framework under {source_dir} — falling back to LLM mining",
+            print(f"[mine] no known framework under {source_dir} — LLM mining only",
                   file=sys.stderr)
-        out = llm_mine(source_dir, scan_root)
-        return _finalize(out)
+        return _finalize(llm_mine(source_dir, scan_root))
     if fw is None:
-        raise SystemExit(f"--llm-augment needs a detectable framework under {source_dir}; "
-                         "use --llm for framework-less repos")
+        raise SystemExit(f"No known bot framework found under {source_dir} and --no-llm "
+                         "given — drop --no-llm to mine with the model")
 
     out: dict = {"framework": fw, "source_dir": str(source_dir), "mined_by": "deterministic",
                  "commands": [], "callbacks": [], "keyboards": [], "replies": []}
@@ -444,8 +452,13 @@ def mine(source_dir: Path, framework: str | None = None, mode: str | None = None
         for f in source_files(scan_root, (".py",)):
             mine_py_file(f, str(f.relative_to(source_dir)), out)
 
-    if mode == "augment":
-        out = merge_maps(out, llm_mine(source_dir, scan_root))
+    if mode == "auto":
+        try:
+            out = merge_maps(out, llm_mine(source_dir, scan_root))
+        except SystemExit as e:
+            # augment is best-effort: the deterministic map stands on its own
+            out["warning"] = f"LLM augment skipped: {e}"
+            print(f"[mine] {out['warning']}", file=sys.stderr)
     return _finalize(out)
 
 
@@ -506,9 +519,9 @@ def main() -> int:
     ap.add_argument("--framework", help="skip detection")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--llm", action="store_true",
-                      help="force LLM mining (any language/framework)")
-    mode.add_argument("--llm-augment", action="store_true",
-                      help="deterministic pass + LLM supplement (i18n tables, constants)")
+                      help="LLM mining only (skip the deterministic pass)")
+    mode.add_argument("--no-llm", action="store_true",
+                      help="deterministic pass only, zero tokens (known frameworks)")
     ap.add_argument("--out", help="write map JSON here (default: <project>/.tg-qa/bot.map.json)")
     args = ap.parse_args()
 
@@ -525,7 +538,7 @@ def main() -> int:
         raise SystemExit(f"source dir not found: {src_path}")
 
     bot_map = mine(src_path, args.framework,
-                   mode="llm" if args.llm else "augment" if args.llm_augment else None)
+                   mode="llm" if args.llm else "det" if args.no_llm else "auto")
 
     out_path = Path(args.out) if args.out else None
     if out_path is None and proj is None and args.project:
