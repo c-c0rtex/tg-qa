@@ -1,0 +1,26 @@
+# systemd unit for tg-qa MCP server in VPS/HTTP mode.
+#   sudo cp deploy/tg-qa-mcp.service /etc/systemd/system/
+#   sudo systemctl edit tg-qa-mcp   # set TGQA_MCP_TOKEN + project alias
+#   sudo systemctl enable --now tg-qa-mcp
+# Prefer stdio-over-SSH when only one person uses the server — no port, no token.
+[Unit]
+Description=tg-qa MCP server (streamable HTTP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tgqa
+WorkingDirectory=/opt/tg-qa
+# TGQA_MCP_TOKEN is REQUIRED: the Telethon session behind this server is a full
+# Telegram account. Generate one: openssl rand -hex 32
+Environment=TGQA_MCP_TOKEN=change-me
+ExecStart=/opt/tg-qa/bin/tg-qa-mcp --project default --http --host 0.0.0.0 --port 8976
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/tg-qa /home/tgqa/.config/tg-qa
+
+[Install]
+WantedBy=multi-user.target

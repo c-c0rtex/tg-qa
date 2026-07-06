@@ -1,0 +1,11 @@
+{
+  "name": "tg-qa",
+  "displayName": "Telegram Bot QA",
+  "version": "0.1.0",
+  "description": "Autonomous Telegram-bot QA: Telethon-driven E2E dialogs, reply & keyboard snapshot testing, specs generated from the bot's source code, zero-token test runs, Mini App handoff to web-qa.",
+  "author": { "name": "c-c0rtex", "url": "https://github.com/c-c0rtex" },
+  "homepage": "https://github.com/c-c0rtex/tg-qa",
+  "repository": "https://github.com/c-c0rtex/tg-qa",
+  "license": "MIT",
+  "keywords": ["qa", "testing", "telegram", "telethon", "bot", "e2e", "mcp", "test-automation"]
+}

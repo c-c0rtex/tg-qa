@@ -1,0 +1,15 @@
+# Sessions & credentials — NEVER committed
+*.session
+*.session-journal
+.env
+projects.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local artifacts
+/reports/

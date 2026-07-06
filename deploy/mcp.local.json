@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tg-qa": {
+      "command": "/абсолютный/путь/к/tg-qa/bin/tg-qa-mcp",
+      "args": ["--project", "ВАШ_ALIAS"]
+    }
+  }
+}

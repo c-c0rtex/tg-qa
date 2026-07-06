@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Create or verify a Telethon session: phone+code+2FA, or --qr for QR scan.
+# Interactive — run in a terminal. See runners/login.py for details.
+set -e
+SKILL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+exec uv run --project "$SKILL" python "$SKILL/runners/login.py" "$@"

@@ -1,0 +1,13 @@
+[
+  {
+    "alias": "my-bot",
+    "path": "/home/me/projects/my-bot",
+    "bot": "@my_test_bot",
+    "api_id": 12345,
+    "api_hash": "change-me (https://my.telegram.org → API development tools)",
+    "roles": [
+      { "name": "default", "session": "main", "default": true },
+      { "name": "second", "session": "/home/me/existing/qa_session.session" }
+    ]
+  }
+]

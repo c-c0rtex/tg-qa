@@ -1,0 +1,246 @@
+"""Telethon core driver — the ONLY place tg-qa talks MTProto.
+
+Both consumers sit on top of this module:
+  - mcp/server.py       — agent-facing tools (explore, debug, manual checks)
+  - runners/*           — zero-token spec execution
+
+Design notes:
+  - A user-account session (not a bot token): tests see exactly what a real user
+    sees — inline keyboards, edits, media, service messages.
+  - Menu bots answer a button click in TWO ways: a new message OR an in-place edit
+    of the clicked message. `click()` watches both; qa_tg_agent's polling missed
+    edits and this was the most common false "no reply".
+  - User accounts are throttled far harder than bots (FloodWait): every outgoing
+    action is spaced by `send_delay`, and FloodWaitError surfaces as a typed error
+    with the wait time instead of a stack trace.
+  - Formatting helpers are pure functions over duck-typed objects so unit tests
+    don't need Telethon.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from pathlib import Path
+
+
+class DriverError(Exception):
+    """Actionable driver failure (auth missing, button not found, flood wait)."""
+
+
+def format_button(btn) -> dict:
+    info = {"text": btn.text}
+    if getattr(btn, "url", None):
+        info["url"] = btn.url
+    if getattr(btn, "data", None):
+        info["data"] = btn.data.decode("utf-8", errors="replace")
+    return info
+
+
+def format_buttons(message) -> list[list[dict]]:
+    if not getattr(message, "buttons", None):
+        return []
+    return [[format_button(b) for b in row] for row in message.buttons]
+
+
+def format_message(msg) -> dict:
+    """Message → plain dict: the wire format for MCP results, spec assertions and
+    maintain's failure context. Everything downstream depends on these keys."""
+    out = {
+        "id": msg.id,
+        "from": "you" if msg.out else "bot",
+        "text": msg.text or "",
+        "date": msg.date.isoformat() if getattr(msg, "date", None) else "",
+    }
+    if getattr(msg, "media", None):
+        out["media_type"] = type(msg.media).__name__
+    buttons = format_buttons(msg)
+    if buttons:
+        out["buttons"] = buttons
+    return out
+
+
+def keyboard_texts(formatted: dict) -> list[list[str]]:
+    """Button captions only — the shape keyboard snapshots assert against."""
+    return [[b["text"] for b in row] for row in formatted.get("buttons", [])]
+
+
+class BotDriver:
+    """One authorized user session driving one bot dialog.
+
+    async with BotDriver(session, api_id, api_hash, bot="@my_bot") as d:
+        result = await d.send("/start")
+        await d.click(result["replies"][-1]["id"], "Settings")
+    """
+
+    def __init__(self, session_path: str | Path, api_id: int, api_hash: str,
+                 bot: str, send_delay: float = 1.0, settle: float = 1.2,
+                 poll_interval: float = 1.0):
+        self.session_path = str(session_path)
+        self.api_id = api_id
+        self.api_hash = api_hash
+        self.bot = bot
+        self.send_delay = send_delay
+        self.settle = settle
+        self.poll_interval = poll_interval
+        self._client = None
+        self._entity = None
+        self._last_action = 0.0
+
+    async def __aenter__(self):
+        await self.connect()
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.close()
+
+    async def connect(self):
+        from telethon import TelegramClient
+        self._client = TelegramClient(self.session_path, self.api_id, self.api_hash)
+        await self._client.connect()
+        if not await self._client.is_user_authorized():
+            await self._client.disconnect()
+            raise DriverError(
+                f"Session '{self.session_path}' is not authorized — run bin/tg-qa-login "
+                "(or point the registry at an existing .session file)")
+        self._entity = await self._client.get_entity(self.bot)
+
+    async def close(self):
+        if self._client:
+            await self._client.disconnect()
+            self._client = None
+
+    async def me(self) -> dict:
+        u = await self._client.get_me()
+        return {"id": u.id, "username": u.username, "first_name": u.first_name}
+
+    # -- outgoing actions ----------------------------------------------------
+
+    async def _throttle(self):
+        gap = self.send_delay - (time.monotonic() - self._last_action)
+        if gap > 0:
+            await asyncio.sleep(gap)
+        self._last_action = time.monotonic()
+
+    async def _guard_flood(self, coro):
+        from telethon.errors import FloodWaitError
+        try:
+            return await coro
+        except FloodWaitError as e:
+            raise DriverError(f"FloodWait: Telegram throttled this account for {e.seconds}s — "
+                              "increase send_delay / reduce parallelism") from e
+
+    async def send(self, text: str, wait: float = 10) -> dict:
+        await self._throttle()
+        sent = await self._guard_flood(self._client.send_message(self._entity, text))
+        replies = await self._poll_new(sent.id, wait)
+        return {"sent_id": sent.id, "replies": replies}
+
+    async def send_file(self, path: str | Path, caption: str = "", voice: bool = False,
+                        wait: float = 15) -> dict:
+        await self._throttle()
+        sent = await self._guard_flood(self._client.send_file(
+            self._entity, str(path), caption=caption or None, voice_note=voice))
+        replies = await self._poll_new(sent.id, wait)
+        return {"sent_id": sent.id, "replies": replies}
+
+    async def click(self, msg_id: int, button_text: str, wait: float = 10) -> dict:
+        msg = await self._client.get_messages(self._entity, ids=msg_id)
+        if isinstance(msg, list):
+            msg = msg[0] if msg else None
+        if msg is None:
+            raise DriverError(f"Message {msg_id} not found in dialog with {self.bot}")
+        target = None
+        for row in msg.buttons or []:
+            for btn in row:
+                if btn.text.strip() == button_text.strip():
+                    target = btn
+                    break
+            if target:
+                break
+        if target is None:
+            raise DriverError(f"Button '{button_text}' not found on message {msg_id}; "
+                              f"available: {keyboard_texts(format_message(msg))}")
+        latest = await self._client.get_messages(self._entity, limit=1)
+        anchor = latest[0].id if latest else msg_id
+        before = format_message(msg)
+
+        await self._throttle()
+        await self._guard_flood(target.click())
+
+        new, edited = await self._poll_after_click(anchor, msg_id, before, wait)
+        return {"clicked": button_text, "on_message": msg_id,
+                "replies": new, "edited": edited}
+
+    async def download_media(self, msg_id: int, out_dir: str | Path) -> str | None:
+        msg = await self._client.get_messages(self._entity, ids=msg_id)
+        if isinstance(msg, list):
+            msg = msg[0] if msg else None
+        if msg is None or not msg.media:
+            return None
+        return await self._client.download_media(msg, file=str(out_dir))
+
+    # -- reading -------------------------------------------------------------
+
+    async def history(self, limit: int = 20) -> list[dict]:
+        msgs = await self._client.get_messages(self._entity, limit=limit)
+        return [format_message(m) for m in reversed(msgs)]
+
+    async def bot_commands(self) -> list[dict]:
+        """Command menu the bot declares via BotFather/setMyCommands — free seed
+        for the bot map, no source code needed."""
+        from telethon.tl.functions.users import GetFullUserRequest
+        full = await self._client(GetFullUserRequest(self._entity))
+        info = getattr(full.full_user, "bot_info", None)
+        cmds = getattr(info, "commands", None) or []
+        return [{"command": "/" + c.command, "description": c.description} for c in cmds]
+
+    async def webview_url(self, url: str, platform: str = "android") -> str:
+        """Resolve a Mini App URL WITH live tgWebAppData (initData) — the web-qa
+        bridge. Experimental until the bridge lands."""
+        from telethon.tl.functions.messages import RequestWebViewRequest
+        res = await self._client(RequestWebViewRequest(
+            peer=self._entity, bot=self._entity, platform=platform, url=url))
+        return res.url
+
+    # -- reply detection -----------------------------------------------------
+
+    async def _poll_new(self, after_id: int, timeout: float) -> list[dict]:
+        """New bot messages after `after_id`. On first hit, waits one `settle`
+        beat and re-reads: bots often answer in bursts (text + menu)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            await asyncio.sleep(self.poll_interval)
+            batch = await self._fetch_new(after_id)
+            if batch:
+                await asyncio.sleep(self.settle)
+                return await self._fetch_new(after_id)
+        return []
+
+    async def _fetch_new(self, after_id: int) -> list[dict]:
+        msgs = await self._client.get_messages(self._entity, limit=10, min_id=after_id)
+        return [format_message(m) for m in reversed(msgs) if not m.out]
+
+    async def _poll_after_click(self, anchor: int, msg_id: int, before: dict,
+                                timeout: float) -> tuple[list[dict], dict | None]:
+        """A click is answered by new messages, an in-place edit, or both."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            await asyncio.sleep(self.poll_interval)
+            new = await self._fetch_new(anchor)
+            edited = await self._fetch_edit(msg_id, before)
+            if new or edited:
+                await asyncio.sleep(self.settle)
+                return await self._fetch_new(anchor), await self._fetch_edit(msg_id, before)
+        return [], None
+
+    async def _fetch_edit(self, msg_id: int, before: dict) -> dict | None:
+        msg = await self._client.get_messages(self._entity, ids=msg_id)
+        if isinstance(msg, list):
+            msg = msg[0] if msg else None
+        if msg is None:
+            return {"deleted": True}
+        now = format_message(msg)
+        if now.get("text") != before.get("text") or now.get("buttons") != before.get("buttons"):
+            return now
+        return None

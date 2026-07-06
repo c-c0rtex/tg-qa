@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# tg-qa MCP server. Default: stdio (local / ssh-launched). --http for VPS daemon mode.
+set -e
+SKILL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+exec uv run --project "$SKILL" python "$SKILL/mcp_server/server.py" "$@"

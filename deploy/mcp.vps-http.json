@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "tg-qa": {
+      "type": "http",
+      "url": "http://my-vps:8976/mcp",
+      "headers": { "Authorization": "Bearer ВАШ_ТОКЕН" }
+    }
+  }
+}

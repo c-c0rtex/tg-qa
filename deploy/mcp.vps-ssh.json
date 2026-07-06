@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tg-qa": {
+      "command": "ssh",
+      "args": ["my-vps", "/opt/tg-qa/bin/tg-qa-mcp", "--project", "ВАШ_ALIAS"]
+    }
+  }
+}

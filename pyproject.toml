@@ -1,0 +1,32 @@
+[project]
+name = "tg-qa"
+version = "0.1.0"
+description = "Autonomous Telegram-bot QA skill for Claude Code: Telethon-driven E2E dialogs, reply/keyboard snapshot testing, LLM-generated self-healing specs, Mini App bridge to web-qa"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "c-c0rtex" }]
+dependencies = [
+    "telethon>=1.36",
+    "mcp>=1.2",
+    "qrcode>=7.4",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8"]
+
+[tool.uv]
+# Not a python package — just scripts with pinned deps. uv manages the env only.
+package = false
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: end-to-end tests against a live Telegram session; run with -m integration",
+]
