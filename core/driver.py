@@ -115,22 +115,24 @@ class BotDriver:
         self._entity = await self._client.get_entity(self.bot)
         await self._apply_notify_settings()
 
-    async def _apply_notify_settings(self):
-        """Test dialogs run on the tester's REAL account: mute the bot by default so
-        every probe message doesn't beep their phone. auto_mute=False actively
-        UNMUTES (the user asked for sound back). Best-effort — a notify-settings
-        failure must never block testing."""
+    async def _mute_peer(self, target):
+        """Apply the driver's mute policy to any peer (the bot dialog, or a test
+        group/chat we create). auto_mute=True → mute forever+silent; False → unmute.
+        Best-effort — a notify-settings failure must never block testing."""
         from telethon.tl.functions.account import UpdateNotifySettingsRequest
         from telethon.tl.types import InputNotifyPeer, InputPeerNotifySettings
         settings = (InputPeerNotifySettings(mute_until=2**31 - 1, silent=True)
                     if self.auto_mute
                     else InputPeerNotifySettings(mute_until=0, silent=False))
         try:
-            peer = await self._client.get_input_entity(self.bot)
+            peer = await self._client.get_input_entity(target)
             await self._client(UpdateNotifySettingsRequest(
                 peer=InputNotifyPeer(peer=peer), settings=settings))
         except Exception:
             pass
+
+    async def _apply_notify_settings(self):
+        await self._mute_peer(self.bot)
 
     async def _mark_read(self):
         """Auto-read: clear the unread badge the test traffic creates in the user's
@@ -150,6 +152,28 @@ class BotDriver:
     async def me(self) -> dict:
         u = await self._client.get_me()
         return {"id": u.id, "username": u.username, "first_name": u.first_name}
+
+    async def create_group(self, title: str, members: list[str]) -> dict:
+        """Create a test group (e.g. an admin chat for a feedback bot) with the given
+        members and return {id, chat_id}. Like the bot dialog, a freshly created test
+        chat is muted + marked read by default so it doesn't beep the tester's real
+        account or pile up an unread badge (auto_mute/auto_read honour the same flags)."""
+        from telethon import functions, utils
+        await self._client(functions.messages.CreateChatRequest(users=members, title=title))
+        entity = None
+        async for d in self._client.iter_dialogs(limit=30):
+            if d.title == title and d.is_group:
+                entity = d.entity
+                break
+        if entity is None:
+            raise DriverError(f"group '{title}' created but not found in dialogs")
+        await self._mute_peer(entity)
+        if self.auto_read:
+            try:
+                await self._client.send_read_acknowledge(entity)
+            except Exception:
+                pass
+        return {"id": entity.id, "chat_id": utils.get_peer_id(entity)}
 
     # -- outgoing actions ----------------------------------------------------
 

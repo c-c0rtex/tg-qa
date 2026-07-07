@@ -61,6 +61,14 @@ class FakeClient:
     async def __call__(self, request):
         self.requests.append(request)
 
+    def iter_dialogs(self, limit=None):
+        dialogs = getattr(self, "dialogs", [])
+
+        async def gen():
+            for d in dialogs:
+                yield d
+        return gen()
+
 
 def make_driver(messages, **kw):
     d = BotDriver("fake.session", 1, "h", "@bot",
@@ -241,6 +249,47 @@ def test_auto_mute_off_unmutes():
     asyncio.run(d._apply_notify_settings())
     assert d._client.requests[0].settings.mute_until == 0
     assert d._client.requests[0].settings.silent is False
+
+
+class FakeDialog:
+    def __init__(self, title, entity, is_group=True):
+        self.title = title
+        self.entity = entity
+        self.is_group = is_group
+
+
+class FakeEntity:
+    def __init__(self, id):
+        self.id = id
+
+
+def test_create_group_mutes_and_reads(monkeypatch):
+    import telethon
+    monkeypatch.setattr(telethon.utils, "get_peer_id", lambda e: -4242)
+    d = make_driver([])
+    d._client.dialogs = [FakeDialog("tg-qa admin", FakeEntity(4242))]
+    res = asyncio.run(d.create_group("tg-qa admin", ["@bot"]))
+    assert res == {"id": 4242, "chat_id": -4242}
+    # muted (an UpdateNotifySettings request) + read acknowledged
+    assert any(getattr(r, "settings", None) is not None
+               and r.settings.mute_until == 2**31 - 1 for r in d._client.requests)
+    assert d._client.read_acks == 1
+
+
+def test_create_group_not_found_errors():
+    d = make_driver([])
+    d._client.dialogs = []
+    with pytest.raises(DriverError):
+        asyncio.run(d.create_group("missing", ["@bot"]))
+
+
+def test_create_group_no_read_when_auto_read_off(monkeypatch):
+    import telethon
+    monkeypatch.setattr(telethon.utils, "get_peer_id", lambda e: -1)
+    d = make_driver([], auto_read=False)
+    d._client.dialogs = [FakeDialog("g", FakeEntity(1))]
+    asyncio.run(d.create_group("g", ["@bot"]))
+    assert d._client.read_acks == 0
 
 
 def test_history_oldest_first():

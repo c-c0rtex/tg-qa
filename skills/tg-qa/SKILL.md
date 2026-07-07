@@ -78,6 +78,13 @@ Pipeline (mirrors web-qa; executor is a Telegram **user session**, not a browser
 
 - Never commit or read out `.session` files, api_id/api_hash, phone numbers. Secrets live
   only in the registry.
+- Test dialogs run on the tester's REAL account: the driver mutes + marks-read the bot
+  dialog by default, and `create_group` does the same for any test chat it creates
+  (auto_mute/auto_read config switches, false = sound / unread back). Never leave a
+  test chat un-muted.
+- One `.session` file = one live client. If the MCP server holds the session, point
+  runners at a copy (a second `.session` path with the same auth key) so they don't
+  collide on the SQLite lock.
 - User accounts are throttled hard (FloodWait): keep `send_delay ≥ 1s`, one session = one
   dialog at a time, no parallel sends from the same role.
 - Mutating flows (payments, data wipes) — only against test stands, never a production
