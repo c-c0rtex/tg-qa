@@ -53,6 +53,8 @@ CONFIG_SKELETON = {
     "language": None,          # language for generated scenarios (default: language of the task)
     "reply_timeout": None,     # seconds to wait for a bot reply (default 10)
     "send_delay": None,        # min seconds between outgoing actions (default 1.0; FloodWait guard)
+    "auto_mute": None,         # default true: mute the bot dialog before testing; false = unmute (sound on)
+    "auto_read": None,         # default true: mark test traffic as read (no unread badge); false = keep unread
     "text_masks": None,        # regex list masked out of reply snapshots (dates, ids, balances)
     "fixture_cmd": None,       # shell cmd seeding deterministic data before a run
     "fixture_teardown_cmd": None,

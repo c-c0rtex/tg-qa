@@ -35,6 +35,8 @@ class FakeClient:
 
     def __init__(self, messages):
         self.messages = messages
+        self.read_acks = 0
+        self.requests = []
 
     async def get_messages(self, entity, limit=None, min_id=None, ids=None):
         if ids is not None:
@@ -43,10 +45,19 @@ class FakeClient:
         out = list(reversed(out))  # newest first, like Telethon
         return out[:limit] if limit else out
 
+    async def send_read_acknowledge(self, entity):
+        self.read_acks += 1
 
-def make_driver(messages):
+    async def get_input_entity(self, ref):
+        return object()
+
+    async def __call__(self, request):
+        self.requests.append(request)
+
+
+def make_driver(messages, **kw):
     d = BotDriver("fake.session", 1, "h", "@bot",
-                  send_delay=0, settle=0, poll_interval=0.01)
+                  send_delay=0, settle=0, poll_interval=0.01, **kw)
     d._client = FakeClient(messages)
     d._entity = object()
     return d
@@ -150,6 +161,34 @@ def test_fetch_edit_deleted_message():
     d = make_driver([])
     res = asyncio.run(d._fetch_edit(5, {"text": "was", "buttons": None}))
     assert res == {"deleted": True}
+
+
+def test_auto_read_marks_after_actions():
+    msgs = [FakeMsg(10, "menu", buttons=[[FakeBtn("Silent")]])]
+    d = make_driver(msgs)
+    asyncio.run(d.history(limit=5))
+    asyncio.run(d.click(10, "Silent", wait=0.05))
+    assert d._client.read_acks == 2
+
+
+def test_auto_read_off_keeps_unread():
+    d = make_driver([FakeMsg(1, "x")], auto_read=False)
+    asyncio.run(d.history(limit=5))
+    assert d._client.read_acks == 0
+
+
+def test_auto_mute_sends_mute_settings():
+    d = make_driver([])
+    asyncio.run(d._apply_notify_settings())
+    assert len(d._client.requests) == 1
+    assert d._client.requests[0].settings.mute_until == 2**31 - 1
+
+
+def test_auto_mute_off_unmutes():
+    d = make_driver([], auto_mute=False)
+    asyncio.run(d._apply_notify_settings())
+    assert d._client.requests[0].settings.mute_until == 0
+    assert d._client.requests[0].settings.silent is False
 
 
 def test_history_oldest_first():

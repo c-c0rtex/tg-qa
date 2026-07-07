@@ -231,7 +231,9 @@ async def make_driver(proj: dict, cfg: dict, role: str | None) -> BotDriver:
     if not bot:
         raise SystemExit("bot username missing (registry entry or .tg-qa/config.json)")
     d = BotDriver(resolve_session(proj, role), api_id, api_hash, bot,
-                  send_delay=float(cfg.get("send_delay") or 1.0))
+                  send_delay=float(cfg.get("send_delay") or 1.0),
+                  auto_mute=cfg.get("auto_mute") is not False,
+                  auto_read=cfg.get("auto_read") is not False)
     await d.connect()
     return d
 

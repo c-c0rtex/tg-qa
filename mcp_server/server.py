@@ -55,7 +55,9 @@ async def _driver(role: str | None) -> BotDriver:
     if not bot:
         raise DriverError("bot username missing — set it in the registry entry or .tg-qa/config.json")
     d = BotDriver(resolve_session(_proj, role), api_id, api_hash, bot,
-                  send_delay=float(_cfg.get("send_delay") or 1.0))
+                  send_delay=float(_cfg.get("send_delay") or 1.0),
+                  auto_mute=_cfg.get("auto_mute") is not False,
+                  auto_read=_cfg.get("auto_read") is not False)
     await d.connect()
     _drivers[key] = d
     return d

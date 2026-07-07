@@ -75,7 +75,8 @@ class BotDriver:
 
     def __init__(self, session_path: str | Path, api_id: int, api_hash: str,
                  bot: str, send_delay: float = 1.0, settle: float = 1.2,
-                 poll_interval: float = 1.0):
+                 poll_interval: float = 1.0, auto_mute: bool = True,
+                 auto_read: bool = True):
         self.session_path = str(session_path)
         self.api_id = api_id
         self.api_hash = api_hash
@@ -83,6 +84,8 @@ class BotDriver:
         self.send_delay = send_delay
         self.settle = settle
         self.poll_interval = poll_interval
+        self.auto_mute = auto_mute
+        self.auto_read = auto_read
         self._client = None
         self._entity = None
         self._last_action = 0.0
@@ -104,6 +107,34 @@ class BotDriver:
                 f"Session '{self.session_path}' is not authorized — run bin/tg-qa-login "
                 "(or point the registry at an existing .session file)")
         self._entity = await self._client.get_entity(self.bot)
+        await self._apply_notify_settings()
+
+    async def _apply_notify_settings(self):
+        """Test dialogs run on the tester's REAL account: mute the bot by default so
+        every probe message doesn't beep their phone. auto_mute=False actively
+        UNMUTES (the user asked for sound back). Best-effort — a notify-settings
+        failure must never block testing."""
+        from telethon.tl.functions.account import UpdateNotifySettingsRequest
+        from telethon.tl.types import InputNotifyPeer, InputPeerNotifySettings
+        settings = (InputPeerNotifySettings(mute_until=2**31 - 1, silent=True)
+                    if self.auto_mute
+                    else InputPeerNotifySettings(mute_until=0, silent=False))
+        try:
+            peer = await self._client.get_input_entity(self.bot)
+            await self._client(UpdateNotifySettingsRequest(
+                peer=InputNotifyPeer(peer=peer), settings=settings))
+        except Exception:
+            pass
+
+    async def _mark_read(self):
+        """Auto-read: clear the unread badge the test traffic creates in the user's
+        client. Configurable off (auto_read=False) for watching runs live."""
+        if not self.auto_read:
+            return
+        try:
+            await self._client.send_read_acknowledge(self._entity)
+        except Exception:
+            pass
 
     async def close(self):
         if self._client:
@@ -134,6 +165,7 @@ class BotDriver:
         await self._throttle()
         sent = await self._guard_flood(self._client.send_message(self._entity, text))
         replies = await self._poll_new(sent.id, wait)
+        await self._mark_read()
         return {"sent_id": sent.id, "replies": replies}
 
     async def send_file(self, path: str | Path, caption: str = "", voice: bool = False,
@@ -142,6 +174,7 @@ class BotDriver:
         sent = await self._guard_flood(self._client.send_file(
             self._entity, str(path), caption=caption or None, voice_note=voice))
         replies = await self._poll_new(sent.id, wait)
+        await self._mark_read()
         return {"sent_id": sent.id, "replies": replies}
 
     async def click(self, msg_id: int, button_text: str, wait: float = 10) -> dict:
@@ -169,6 +202,7 @@ class BotDriver:
         await self._guard_flood(target.click())
 
         new, edited = await self._poll_after_click(anchor, msg_id, before, wait)
+        await self._mark_read()
         return {"clicked": button_text, "on_message": msg_id,
                 "replies": new, "edited": edited}
 
@@ -184,6 +218,7 @@ class BotDriver:
 
     async def history(self, limit: int = 20) -> list[dict]:
         msgs = await self._client.get_messages(self._entity, limit=limit)
+        await self._mark_read()
         return [format_message(m) for m in reversed(msgs)]
 
     async def bot_commands(self) -> list[dict]:
