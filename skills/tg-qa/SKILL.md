@@ -67,7 +67,12 @@ Pipeline (mirrors web-qa; executor is a Telegram **user session**, not a browser
 - Mini App testing is web-qa's job; tg-qa is the bridge. `tg-qa-miniapp` fetches a fresh,
   correctly-signed initData (short-lived — always resolve per run, never store) and the
   SDK initialises natively when Playwright loads the full `webview_url`. The emitted
-  `init_script` is a fallback shim for apps that read `window.Telegram.WebApp` directly.
+  `init_script` is a shim for apps that read `window.Telegram.WebApp` directly — it renders
+  MainButton/BackButton as real DOM buttons (`data-testid="tg-main-button"` /
+  `"tg-back-button"`) so a headless browser can drive the confirm/pay flow, and records
+  requested payments on `window.__tgInvoices`. Apps built on `@twa-dev/sdk` / the official
+  `telegram-web-app.js` use the SDK's own native buttons (not DOM) — for those the
+  purchase click needs the real client; assert the flow up to invoice creation instead.
 
 ## Rules
 

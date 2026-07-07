@@ -61,9 +61,15 @@ def build_init_script(init_data: str, unsafe: dict, version: str = "7.0",
                       platform: str = "web") -> str:
     """JS installed before app scripts run: a minimal but SDK-satisfying
     window.Telegram.WebApp. Covers what real Mini Apps read at startup — initData(Unsafe),
-    version/platform/colorScheme, viewport, themeParams, and no-op stubs for the UI
-    surface (MainButton/BackButton/HapticFeedback) so the app initialises instead of
-    throwing on a missing method."""
+    version/platform/colorScheme, viewport, themeParams.
+
+    Crucially, MainButton and BackButton are backed by REAL DOM buttons
+    (data-testid="tg-main-button" / "tg-back-button"): in the real client these are
+    native chrome outside the page, so a headless browser could never click them and
+    the purchase/confirm flow was undrivable. Rendering them as DOM elements wired to
+    the app's own onClick handlers makes the whole flow clickable by web-qa.
+    openInvoice records the last invoice URL on window.__tgInvoices so a test can
+    assert the payment was requested (real payment still happens in Telegram)."""
     payload = {
         "initData": init_data,
         "initDataUnsafe": unsafe,
@@ -79,20 +85,46 @@ def build_init_script(init_data: str, unsafe: dict, version: str = "7.0",
         "(function () {\n"
         f"  var d = {json.dumps(payload, ensure_ascii=False)};\n"
         "  var noop = function () {};\n"
-        "  var button = function (extra) {\n"
-        "    return Object.assign({ isVisible: false, isActive: true, text: '',\n"
-        "      show: noop, hide: noop, enable: noop, disable: noop,\n"
-        "      onClick: noop, offClick: noop, setText: noop, setParams: noop,\n"
-        "      showProgress: noop, hideProgress: noop }, extra || {});\n"
-        "  };\n"
+        "  function domButton(testid, label) {\n"
+        "    var handlers = [];\n"
+        "    var el = null;\n"
+        "    function ensure() {\n"
+        "      if (el || !document.body) return;\n"
+        "      el = document.createElement('button');\n"
+        "      el.setAttribute('data-testid', testid);\n"
+        "      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;'\n"
+        "        + 'padding:14px;border:0;font-size:16px;display:none';\n"
+        "      el.addEventListener('click', function () {\n"
+        "        handlers.slice().forEach(function (h) { try { h(); } catch (e) {} });\n"
+        "      });\n"
+        "      document.body.appendChild(el);\n"
+        "    }\n"
+        "    if (document.readyState !== 'loading') ensure();\n"
+        "    else document.addEventListener('DOMContentLoaded', ensure);\n"
+        "    var api = { isVisible: false, isActive: true, text: label || '',\n"
+        "      show: function () { ensure(); if (el) { el.style.display = 'block'; } this.isVisible = true; return this; },\n"
+        "      hide: function () { if (el) { el.style.display = 'none'; } this.isVisible = false; return this; },\n"
+        "      setText: function (t) { this.text = t; ensure(); if (el) el.textContent = t; return this; },\n"
+        "      setParams: function (p) { if (p && p.text) this.setText(p.text); return this; },\n"
+        "      onClick: function (cb) { handlers.push(cb); return this; },\n"
+        "      offClick: function (cb) { handlers = handlers.filter(function (h) { return h !== cb; }); return this; },\n"
+        "      enable: function () { this.isActive = true; return this; },\n"
+        "      disable: function () { this.isActive = false; return this; },\n"
+        "      showProgress: noop, hideProgress: noop };\n"
+        "    return api;\n"
+        "  }\n"
+        "  window.__tgInvoices = [];\n"
         "  var WebApp = Object.assign({}, d, {\n"
         "    ready: noop, expand: noop, close: noop,\n"
         "    isExpanded: true, isClosingConfirmationEnabled: false,\n"
-        "    MainButton: button(), BackButton: button(),\n"
+        "    MainButton: domButton('tg-main-button', 'CONTINUE'),\n"
+        "    BackButton: domButton('tg-back-button', 'BACK'),\n"
         "    HapticFeedback: { impactOccurred: noop, notificationOccurred: noop,\n"
         "      selectionChanged: noop },\n"
         "    onEvent: noop, offEvent: noop, sendData: noop, switchInlineQuery: noop,\n"
-        "    openLink: noop, openTelegramLink: noop, openInvoice: noop,\n"
+        "    openLink: noop, openTelegramLink: noop,\n"
+        "    openInvoice: function (url, cb) { window.__tgInvoices.push(url);\n"
+        "      if (cb) cb('paid'); },\n"
         "    showAlert: function (m, cb) { if (cb) cb(); },\n"
         "    showConfirm: function (m, cb) { if (cb) cb(true); },\n"
         "    showPopup: function (p, cb) { if (cb) cb(); },\n"

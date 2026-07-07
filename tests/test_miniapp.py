@@ -42,10 +42,14 @@ def test_build_init_script_installs_webapp():
     assert '"platform": "ios"' in js
     assert INIT_DATA in js                       # raw initData embedded for the SDK
     assert '"id": 42' in js                      # initDataUnsafe.user reachable
-    # the UI surface the SDK touches at startup must be present as no-ops
+    # the UI surface the SDK touches at startup must be present
     for member in ("MainButton", "BackButton", "HapticFeedback", "ready", "expand",
                    "showAlert", "openInvoice"):
         assert member in js
+    # MainButton/BackButton are DOM-backed so headless tests can click them
+    assert "tg-main-button" in js and "tg-back-button" in js
+    # openInvoice records requested payments for assertions
+    assert "__tgInvoices" in js
 
 
 def test_build_init_script_is_valid_json_payload():
