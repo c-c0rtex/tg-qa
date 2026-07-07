@@ -108,6 +108,13 @@ def test_check_buttons_exact_and_contain(tmp_path):
     assert len(fails) == 2
 
 
+def test_check_buttons_contain_is_substring(tmp_path):
+    produced = [msg("m", buttons=[["🦄 Open Telebook"]])]
+    assert check_step({"buttons_contain": ["🦄 Open"]}, produced, None, bl(tmp_path)) == []
+    fails = check_step({"buttons_contain": ["Оплатить"]}, produced, None, bl(tmp_path))
+    assert "no button containing" in fails[0]
+
+
 def test_check_media_and_edited(tmp_path):
     produced = [msg("pic", media="MessageMediaPhoto")]
     assert check_step({"media_type": "Photo"}, produced, None, bl(tmp_path)) == []

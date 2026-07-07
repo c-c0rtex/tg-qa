@@ -24,7 +24,8 @@ Assertion vocabulary per step (all optional, all checked):
   snapshot: name      — LAST text vs .tg-qa/baseline/<name>.txt, text_masks applied;
                         missing baseline is written and queued for human review
   buttons: [[..]]     — exact keyboard of the last button-bearing message
-  buttons_contain: [] — captions present anywhere on that keyboard
+  buttons_contain: [] — caption FRAGMENTS present anywhere on that keyboard (substring
+                        match — dynamic captions like "🦄 Open {appName}" stay assertable)
   buttons_snapshot: n — keyboard vs .tg-qa/baseline/<n>.kb.json
   media_type: Photo   — media class of the last reply
   edited: true        — the clicked message was edited in place (click steps only)
@@ -201,8 +202,10 @@ def check_step(exp: dict, produced: list[dict], edited: dict | None,
             fails.append(f"keyboard mismatch:\nexpected: {exp['buttons']}\nactual:   {actual}")
     for cap in exp.get("buttons_contain") or []:
         flat = [t for row in (keyboard_texts(with_kb) if with_kb else []) for t in row]
-        if cap not in flat:
-            fails.append(f"button {cap!r} not on keyboard {flat}")
+        # substring match: mined captions often carry {placeholders} ("🦄 Open {appName}"),
+        # so specs assert a stable fragment of the caption, not its runtime rendering
+        if not any(cap in t for t in flat):
+            fails.append(f"no button containing {cap!r} on keyboard {flat}")
     if exp.get("buttons_snapshot"):
         err = baselines.check_keyboard(exp["buttons_snapshot"],
                                        keyboard_texts(with_kb) if with_kb else [])

@@ -53,7 +53,8 @@ steps:
       regex: "pat.tern"
       snapshot: kebab-name      # reply text baseline (use for stable texts)
       buttons: [["Caption A"], ["Caption B"]]   # exact keyboard, row by row
-      buttons_contain: ["Caption"]              # weaker: captions present anywhere
+      buttons_contain: ["Caption"]              # weaker: caption or its stable FRAGMENT
+                                                # (substring match) present anywhere
       buttons_snapshot: kebab-name
       media_type: Photo
       reply_within: 15          # only when the default timeout is too tight
@@ -73,8 +74,10 @@ RULES:
 - snapshot names: unique across the project, kebab-case, prefixed with the tc id
   (e.g. "{tc_slug}-welcome").
 - Use `no_reply: true` only when silence IS the expected behaviour.
-- 1-6 steps. Do NOT invent commands or buttons absent from the map unless the TC
-  explicitly introduces them.
+- 1-6 steps. Do NOT invent commands or buttons absent from the map — EXCEPT when the
+  TC itself deliberately introduces them (e.g. testing an UNKNOWN command or a button
+  from a dynamic keyboard): keep those exactly as the TC states, a probe warning about
+  them is expected and fine.
 - Output ONLY the YAML document, no fences, no commentary.
 """
 
@@ -151,8 +154,9 @@ def gen_one(tc: dict, bot_context: str, bot_map: dict, probe: bool) -> tuple[dic
         feedback = err or ("the runner probed your spec against the REAL bot map:\n- "
                            + "\n- ".join(warnings)
                            + "\nUse only mined commands/captions — EXCEPTION: keep a step "
-                             "if its button only appears on a dynamic keyboard the TC "
-                             "explicitly describes.")
+                             "EXACTLY as written when the TC deliberately introduces it "
+                             "(an unknown command under test, a button from a dynamic "
+                             "keyboard): do NOT substitute it with something else.")
         raw = call_claude(prompt + RETRY_SUFFIX.format(feedback=feedback))
         spec, err = parse_spec_yaml(raw)
         if err:
