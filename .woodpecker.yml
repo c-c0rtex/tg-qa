@@ -1,0 +1,14 @@
+# Woodpecker CI (ci.codeberg.org) — mirrors ci-local.sh.
+# Pure Python (Telethon/MCP), no browsers. Enable this repo at https://ci.codeberg.org.
+when:
+  - event: [push, pull_request]
+
+steps:
+  - name: ci
+    image: python:3.12-slim
+    commands:
+      - pip install --quiet uv
+      - python3 -m json.tool .claude-plugin/plugin.json > /dev/null
+      - uv sync
+      - uv run ruff check .
+      - uv run pytest -q
