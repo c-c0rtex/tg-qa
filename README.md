@@ -50,6 +50,29 @@ user session (.session) ◀──core/driver.py──▶ Telegram ◀──run�
   with live, correctly-signed `tgWebAppData` (initData) and hands it over, so the real app
   runs in a headless browser under a genuine Telegram identity.
 
+## Install
+
+As a Claude Code plugin (from inside Claude Code):
+
+```
+/plugin marketplace add c-c0rtex/web-qa
+/plugin install tg-qa@c-c0rtex
+```
+
+The only requirement is [uv](https://docs.astral.sh/uv/); the `bin/` wrappers create the
+venv and install pinned dependencies on first use (no browsers, no build step). Plugin
+installs keep the project registry in `~/.config/tg-qa/projects.json`, so it survives
+plugin updates.
+
+Or as a plain skill:
+
+```bash
+git clone https://github.com/c-c0rtex/tg-qa ~/.claude/skills/tg-qa
+cd ~/.claude/skills/tg-qa
+uv sync                       # optional — the bin/ wrappers do this on first run
+cp projects.example.json projects.json   # then edit, or use tg-qa-register-project
+```
+
 ## Setup
 
 1. **API credentials — yours, created by you.** Go to [my.telegram.org](https://my.telegram.org)
