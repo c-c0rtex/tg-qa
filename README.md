@@ -6,9 +6,23 @@ inline keyboards, generate scenarios and specs from the bot's **source code**, a
 the whole matrix without spending LLM tokens. Sister project of
 [web-qa](https://github.com/c-c0rtex/web-qa) — same pipeline, different executor.
 
-> Status: v0.1 in development — the full pipeline (mine → generate → spec-gen → run →
-> maintain), the MCP server and session tooling are implemented; dogfooding on the
-> Telebook demo stand is next.
+> Status: v0.1 — the full pipeline (mine → generate → spec-gen → run → maintain), the
+> MCP server, session tooling and the Mini App bridge are implemented and dogfooded on
+> two live demo bots (see below).
+
+## Demos
+
+Want to see it run before installing? Two worked examples, each with a pinned upstream bot,
+committed test state and real reports:
+
+- **[tg-qa-demo](https://github.com/c-c0rtex/tg-qa-demo)** — [Telebook](https://github.com/neSpecc/telebook)
+  (node-telegram-bot-api): a **Mini App** bot with **Telegram Stars** payments. Shows the
+  initData bridge running the real Vue app in headless chromium, and bot-dialog snapshots
+  (7/7).
+- **[tg-qa-feedback-demo](https://github.com/c-c0rtex/tg-qa-feedback-demo)** — MasterGroosha's
+  feedback bot (aiogram 3, Fluent i18n): a **bot-centric** demo exercising **media, stickers
+  and voice** — voice/photo confirmed, sticker/video-note rejected as unsupported (6/6). This
+  bot drove the aiogram source-miner and i18n-locale mining features.
 
 ## How it works
 
@@ -33,7 +47,8 @@ user session (.session) ◀──core/driver.py──▶ Telegram ◀──run�
 - **A user account, not a bot token**: tests see exactly what a person sees — inline
   keyboards, in-place edits, media. Clicks detect both new replies and edits.
 - **Mini Apps**: the bot's web app is tested by web-qa; tg-qa resolves the webview URL
-  with live `tgWebAppData` (initData) and hands it over. (v0.2)
+  with live, correctly-signed `tgWebAppData` (initData) and hands it over, so the real app
+  runs in a headless browser under a genuine Telegram identity.
 
 ## Setup
 
