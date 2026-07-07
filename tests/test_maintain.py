@@ -70,6 +70,19 @@ def test_heal_one_product_bug_verdict(tmp_path, monkeypatch):
     assert (tg / "specs" / "tc-g1.yaml").read_text().startswith("tc: TC-G1")
 
 
+def test_heal_one_product_bug_verdict_after_reasoning(tmp_path, monkeypatch):
+    # models often explain before the marker — the verdict must still be recognized
+    reply = ("Спека корректна, ожидание оправдано.\n"
+             "Живой бот на голосовое отвечает ошибкой неподдерживаемого типа.\n\n"
+             "PRODUCT-BUG: бот больше не принимает voice, хотя /help их обещает")
+    tg = setup_project(tmp_path)
+    monkeypatch.setattr(maintain, "call_claude", lambda p, **kw: reply)
+    out = maintain.heal_one(RESULT, tg, "ctx", {}, dry_run=False)
+    assert out["status"] == "product-bug"
+    assert "voice" in out["reason"] and out["reason"].startswith("бот больше не")
+    assert (tg / "specs" / "tc-g1.yaml").read_text().startswith("tc: TC-G1")  # untouched
+
+
 def test_heal_one_invalid_fix(tmp_path, monkeypatch):
     tg = setup_project(tmp_path)
     monkeypatch.setattr(maintain, "call_claude", lambda p, **kw: "tc: TC-G1\nsteps: []\n")

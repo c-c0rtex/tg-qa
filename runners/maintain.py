@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -104,10 +105,12 @@ def heal_one(result: dict, tg: Path, bot_context: str, bot_map: dict,
     )
     out = call_claude(prompt)
 
-    first_line = out.strip().splitlines()[0] if out.strip() else ""
-    if first_line.startswith("PRODUCT-BUG:"):
+    # A PRODUCT-BUG verdict can appear on ANY line — models often add a sentence of
+    # reasoning before the marker. Scan for it rather than requiring the first line.
+    verdict = re.search(r"^\s*PRODUCT-BUG:\s*(.+)$", out, re.MULTILINE)
+    if verdict:
         return {"tc": result.get("tc"), "spec": result["spec"],
-                "status": "product-bug", "reason": first_line[len("PRODUCT-BUG:"):].strip()}
+                "status": "product-bug", "reason": verdict.group(1).strip()}
 
     spec, err = parse_spec_yaml(out)
     if err:
