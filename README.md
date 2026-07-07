@@ -1,4 +1,19 @@
-# tg-qa
+<h1 align="center">tg-qa</h1>
+
+<p align="center">
+  Autonomous Telegram-bot QA skill for Claude Code —<br>
+  mine the bot's code, generate specs, run with zero tokens.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/github/actions/workflow/status/c-c0rtex/tg-qa/ci.yml?style=flat-square&label=CI" alt="CI">
+  <img src="https://img.shields.io/badge/version-0.1.0-blue?style=flat-square" alt="Version 0.1.0">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License: MIT">
+  <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/uv-managed-DE5FE9?style=flat-square" alt="uv">
+  <img src="https://img.shields.io/badge/Telethon-1.36+-2CA5E0?style=flat-square&logo=telegram&logoColor=white" alt="Telethon 1.36+">
+  <img src="https://img.shields.io/badge/Claude%20Code-skill-D97757?style=flat-square" alt="Claude Code Skill">
+</p>
 
 Autonomous Telegram-bot QA for [Claude Code](https://claude.com/claude-code): drive real
 dialogs with a bot through a user account (Telethon/MTProto), snapshot-test replies and
