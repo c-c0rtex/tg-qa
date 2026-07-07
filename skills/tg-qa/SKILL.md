@@ -5,6 +5,17 @@ description: Autonomous Telegram-bot QA — Telethon-driven E2E dialogs (send/cl
 
 # tg-qa — Autonomous Telegram Bot QA
 
+## Locating the tooling
+
+All scripts below live under the plugin root: call them as
+`${CLAUDE_PLUGIN_ROOT}/bin/<script>`. When `${CLAUDE_PLUGIN_ROOT}` is unset
+(classic git-clone install into `~/.claude/skills/tg-qa`), use the repository root —
+the directory two levels above this file.
+
+First run needs no manual setup beyond [uv](https://docs.astral.sh/uv/): every bin
+wrapper is `uv run --project <root>`-based, and `uv run` creates the venv and installs
+pinned dependencies automatically on first invocation. No browsers, no compilers.
+
 Pipeline (mirrors web-qa; executor is a Telegram **user session**, not a browser):
 
 1. **Explore** — mine the bot's source code (`bot_mine`, commands/handlers/keyboards/reply
@@ -23,22 +34,22 @@ Pipeline (mirrors web-qa; executor is a Telegram **user session**, not a browser
 
 ## Tooling
 
-- `bin/tg-qa-register-project <alias> --bot @bot --api-id … --api-hash …` — registry entry
+- `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-register-project <alias> --bot @bot --api-id … --api-hash …` — registry entry
   (secrets: `~/.config/tg-qa/projects.json`) + `.tg-qa/` skeleton in the project.
-- `bin/tg-qa-login --session <name> [--qr]` — create/verify a session (interactive; tell
-  the user to run it with `! bin/tg-qa-login …`, never run it yourself). Existing
+- `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-login --session <name> [--qr]` — create/verify a session (interactive; tell
+  the user to run it with `! ${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-login …`, never run it yourself). Existing
   `.session` files are used as-is via the registry.
-- `bin/tg-qa-mine --project <alias>` — bot map from source → `.tg-qa/bot.map.json`.
-- `bin/tg-qa-generate --project <alias> --task "…"|--diff <ref>` — scenario TCs from the
+- `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-mine --project <alias>` — bot map from source → `.tg-qa/bot.map.json`.
+- `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-generate --project <alias> --task "…"|--diff <ref>` — scenario TCs from the
   map; review the md with the user before automating.
-- `bin/tg-qa-spec-gen --project <alias> --scenario <file.md>` — YAML specs, validated and
+- `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-spec-gen --project <alias> --scenario <file.md>` — YAML specs, validated and
   probed against the map (`--no-probe`, `--tc`, `--force`).
-- `bin/tg-qa-run --project <alias>` — zero-token run; `--passive-only` (gate mutating),
+- `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-run --project <alias>` — zero-token run; `--passive-only` (gate mutating),
   `--update-baseline`, `--junit`, `--role`, `--no-fixtures`, `--specs <glob>`.
-- `bin/tg-qa-maintain --project <alias> [--dry-run]` — heal failing specs from the last
+- `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-maintain --project <alias> [--dry-run]` — heal failing specs from the last
   run; a `PRODUCT-BUG:` verdict means the bot (not the spec) is wrong — report it, never
   weaken assertions.
-- `bin/tg-qa-mcp --project <alias>` — MCP server, stdio; `--http --token …` for VPS
+- `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-mcp --project <alias>` — MCP server, stdio; `--http --token …` for VPS
   daemon mode (see `deploy/`).
 - MCP tools (all accept optional `role`): `tg_me`, `tg_send`, `tg_click`, `tg_history`,
   `tg_send_file`, `tg_download_media`, `tg_bot_commands`, `tg_webview_url`.
