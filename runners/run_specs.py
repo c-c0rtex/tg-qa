@@ -79,13 +79,18 @@ def validate_spec(spec: dict) -> list[str]:
         if not isinstance(step, dict):
             errors.append(f"step {i}: not a mapping")
             continue
-        actions = [k for k in ("send", "click") if k in step]
+        actions = [k for k in ("send", "click", "send_media") if k in step]
         if len(actions) != 1:
-            errors.append(f"step {i}: exactly one of send/click required, got {actions or 'none'}")
+            errors.append(f"step {i}: exactly one of send/click/send_media required, "
+                          f"got {actions or 'none'}")
         if "click" in step:
             c = step["click"]
             if not (isinstance(c, str) or (isinstance(c, dict) and c.get("button"))):
                 errors.append(f"step {i}: click must be a button caption or {{button: ...}}")
+        if "send_media" in step:
+            m = step["send_media"]
+            if not (isinstance(m, dict) and m.get("path")):
+                errors.append(f"step {i}: send_media must be {{path: ..., kind: ...}}")
         exp = step.get("expect") or {}
         if not isinstance(exp, dict):
             errors.append(f"step {i}: expect must be a mapping")
@@ -255,6 +260,12 @@ async def run_spec(spec: dict, driver: BotDriver, timeout: float,
                 r = await driver.send(str(step["send"]), wait=wait)
                 produced = r["replies"]
                 result["dialog"].append({"you": str(step["send"])})
+            elif "send_media" in step:
+                media = step["send_media"]
+                r = await driver.send_media(media["path"], kind=media.get("kind", "auto"),
+                                            caption=media.get("caption", ""), wait=wait)
+                produced = r["replies"]
+                result["dialog"].append({"you": f"[{r['kind']}] {media['path']}"})
             else:
                 caption = step["click"]["button"] if isinstance(step["click"], dict) else step["click"]
                 if last_kb_msg_id is None:

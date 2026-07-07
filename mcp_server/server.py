@@ -90,10 +90,12 @@ async def tg_history(limit: int = 20, role: str | None = None) -> list[dict]:
 
 
 @app.tool()
-async def tg_send_file(path: str, caption: str = "", voice: bool = False,
-                       wait: float = 15, role: str | None = None) -> dict:
-    """Send a file (photo/document, or .ogg as a voice note with voice=true)."""
-    return await (await _driver(role)).send_file(path, caption=caption, voice=voice, wait=wait)
+async def tg_send_media(path: str, kind: str = "auto", caption: str = "",
+                        wait: float = 15, role: str | None = None) -> dict:
+    """Send media of any kind and return the bot's replies. kind =
+    photo | document | voice (гс, .ogg) | video_note (кружок, square .mp4) |
+    sticker (.webp/.tgs) | video | audio | gif | auto (infer from the file)."""
+    return await (await _driver(role)).send_media(path, kind=kind, caption=caption, wait=wait)
 
 
 @app.tool()

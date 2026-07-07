@@ -174,14 +174,44 @@ class BotDriver:
         await self._mark_read()
         return {"sent_id": sent.id, "replies": replies}
 
-    async def send_file(self, path: str | Path, caption: str = "", voice: bool = False,
-                        wait: float = 15) -> dict:
+    # kind → send_file kwargs. "photo"/"sticker"/"video"/"audio"/"gif"/"auto" carry no
+    # special flag — Telethon infers the type from the file (a .webp becomes a sticker,
+    # an .ogg an audio, etc.); the flagged kinds force a specific presentation.
+    _MEDIA_FLAGS = {
+        "voice": {"voice_note": True},        # гс — needs an .ogg/opus file
+        "video_note": {"video_note": True},   # кружок — needs a SQUARE video
+        "document": {"force_document": True},
+        "gif": {},
+        "sticker": {},
+        "video": {},
+        "audio": {},
+        "photo": {},
+        "auto": {},
+    }
+
+    async def send_media(self, path: str | Path, kind: str = "auto", caption: str = "",
+                         wait: float = 15) -> dict:
+        """Send any media kind: photo | document | voice | video_note | sticker | video |
+        audio | gif | auto. The caller supplies a file appropriate to the kind (voice→ogg,
+        video_note→square mp4, sticker→webp/tgs)."""
+        if kind not in self._MEDIA_FLAGS:
+            raise DriverError(f"unknown media kind {kind!r}; "
+                              f"use one of {sorted(self._MEDIA_FLAGS)}")
+        p = Path(path).expanduser()
+        if not p.is_file():
+            raise DriverError(f"media file not found: {p}")
         await self._throttle()
         sent = await self._guard_flood(self._client.send_file(
-            self._entity, str(path), caption=caption or None, voice_note=voice))
+            self._entity, str(p), caption=caption or None, **self._MEDIA_FLAGS[kind]))
         replies = await self._poll_new(sent.id, wait)
         await self._mark_read()
-        return {"sent_id": sent.id, "replies": replies}
+        return {"sent_id": sent.id, "kind": kind, "replies": replies}
+
+    async def send_file(self, path: str | Path, caption: str = "", voice: bool = False,
+                        wait: float = 15) -> dict:
+        """Back-compat thin wrapper over send_media."""
+        return await self.send_media(path, kind="voice" if voice else "auto",
+                                     caption=caption, wait=wait)
 
     async def click(self, msg_id: int, button_text: str, wait: float = 10) -> dict:
         msg = await self._client.get_messages(self._entity, ids=msg_id)

@@ -36,6 +36,16 @@ def test_validate_empty():
     assert validate_spec({"tc": "x"}) == ["missing or empty `steps`"]
 
 
+def test_validate_send_media():
+    assert validate_spec({"tc": "T", "steps": [
+        {"send_media": {"path": "/tmp/a.ogg", "kind": "voice"}, "expect": {"contains": ["ok"]}}]}) == []
+    errs = validate_spec({"tc": "T", "steps": [{"send_media": {"kind": "voice"}}]})
+    assert any("send_media must be" in e for e in errs)
+    errs2 = validate_spec({"tc": "T", "steps": [
+        {"send": "/x", "send_media": {"path": "a"}}]})
+    assert any("exactly one of send/click/send_media" in e for e in errs2)
+
+
 # -- baselines ---------------------------------------------------------------------
 
 def test_baseline_create_then_match_then_diff(tmp_path):
@@ -150,6 +160,10 @@ class FakeDriver:
         return {"clicked": caption, "on_message": msg_id,
                 "replies": r.get("replies", []), "edited": r.get("edited")}
 
+    async def send_media(self, path, kind="auto", caption="", wait=15):
+        return {"sent_id": 1, "kind": kind,
+                "replies": self.script.get(("send_media", kind), [])}
+
     async def close(self):
         self.closed = True
 
@@ -170,6 +184,16 @@ def test_run_spec_send_then_click_flow(tmp_path):
     res = run(spec, d, tmp_path)
     assert res["status"] == "pass" and res["steps"] == 2
     assert {"you": "[click] Settings"} in res["dialog"]
+
+
+def test_run_spec_send_media_step(tmp_path):
+    d = FakeDriver({("send_media", "voice"): [msg("Click the button below")]})
+    spec = {"tc": "TM", "steps": [
+        {"send_media": {"path": "/tmp/v.ogg", "kind": "voice"},
+         "expect": {"contains": ["Click the button"]}}]}
+    res = run(spec, d, tmp_path)
+    assert res["status"] == "pass"
+    assert {"you": "[voice] /tmp/v.ogg"} in res["dialog"]
 
 
 def test_run_spec_click_without_keyboard_errors(tmp_path):

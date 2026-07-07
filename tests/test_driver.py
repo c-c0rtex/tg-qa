@@ -37,6 +37,13 @@ class FakeClient:
         self.messages = messages
         self.read_acks = 0
         self.requests = []
+        self.sent_files = []
+
+    async def send_file(self, entity, path, caption=None, **kwargs):
+        self.sent_files.append({"path": path, "caption": caption, "kwargs": kwargs})
+        self.messages.append(FakeMsg(max((m.id for m in self.messages), default=0) + 1,
+                                     out=True))
+        return self.messages[-1]
 
     async def get_messages(self, entity, limit=None, min_id=None, ids=None):
         if ids is not None:
@@ -161,6 +168,51 @@ def test_fetch_edit_deleted_message():
     d = make_driver([])
     res = asyncio.run(d._fetch_edit(5, {"text": "was", "buttons": None}))
     assert res == {"deleted": True}
+
+
+def test_send_media_kind_flags(tmp_path):
+    f = tmp_path / "clip.mp4"
+    f.write_bytes(b"x")
+    cases = {
+        "voice": {"voice_note": True},
+        "video_note": {"video_note": True},
+        "document": {"force_document": True},
+        "photo": {},
+        "sticker": {},
+        "video": {},
+        "gif": {},
+        "auto": {},
+    }
+    for kind, expected in cases.items():
+        d = make_driver([])
+        res = asyncio.run(d.send_media(f, kind=kind, caption="c"))
+        assert res["kind"] == kind
+        sent = d._client.sent_files[0]
+        assert sent["caption"] == "c"
+        assert sent["kwargs"] == expected
+
+
+def test_send_media_unknown_kind(tmp_path):
+    f = tmp_path / "x.bin"
+    f.write_bytes(b"x")
+    d = make_driver([])
+    with pytest.raises(DriverError):
+        asyncio.run(d.send_media(f, kind="hologram"))
+
+
+def test_send_media_missing_file():
+    d = make_driver([])
+    with pytest.raises(DriverError):
+        asyncio.run(d.send_media("/no/such/file.ogg", kind="voice"))
+
+
+def test_send_file_backcompat_voice(tmp_path):
+    f = tmp_path / "v.ogg"
+    f.write_bytes(b"x")
+    d = make_driver([])
+    res = asyncio.run(d.send_file(f, voice=True))
+    assert res["kind"] == "voice"
+    assert d._client.sent_files[0]["kwargs"] == {"voice_note": True}
 
 
 def test_auto_read_marks_after_actions():
