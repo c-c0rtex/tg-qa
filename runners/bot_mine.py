@@ -197,8 +197,29 @@ def mine_js_file(path: Path, rel: str, out: dict) -> None:
 
 # --- aiogram v3 -------------------------------------------------------------------
 
-RE_AIO_COMMAND = re.compile(r"Command\(\s*(%s)" % RE_PY_STRING)
+RE_AIO_CMD_CALL = re.compile(r"\bCommand\(")
+RE_AIO_BOTCOMMAND = re.compile(r"BotCommand\(\s*command\s*=\s*(%s)" % RE_PY_STRING)
+RE_PY_STR_ONLY = re.compile(RE_PY_STRING)
 RE_AIO_COMMANDSTART = re.compile(r"CommandStart\(")
+
+
+def aiogram_command_names(call_inner: str) -> list[str]:
+    """Command names from the inside of a Command(...) call. Handles the positional
+    form `Command("start", "help")` and the keyword-list form
+    `Command(commands=["start", "get"])` / `Command(commands="start")`. Strings that
+    belong to OTHER kwargs (prefix=, ignore_case=…) are excluded."""
+    m = re.search(r"commands\s*=\s*", call_inner)
+    if m:
+        scope = call_inner[m.end():]
+        # stop at the next kwarg so a following prefix="/" isn't picked up
+        nxt = re.search(r",\s*\w+\s*=", scope)
+        if nxt:
+            scope = scope[:nxt.start()]
+    else:
+        # positional strings only, up to the first kwarg
+        kw = re.search(r"\b\w+\s*=", call_inner)
+        scope = call_inner[:kw.start()] if kw else call_inner
+    return [unquote_py(s.group(0)) for s in RE_PY_STR_ONLY.finditer(scope)]
 RE_AIO_FDATA = re.compile(r"F\.data(?:\.startswith)?\s*(?:==\s*|\(\s*)(%s)" % RE_PY_STRING)
 RE_AIO_CBFACTORY = re.compile(r"prefix\s*=\s*(%s)" % RE_PY_STRING)
 RE_AIO_BTN = re.compile(r"InlineKeyboardButton\(", re.S)
@@ -213,9 +234,16 @@ RE_AIO_SEND = re.compile(r"\.send_message\(\s*[^,()]*,\s*(?:text\s*=\s*)?(%s)" %
 def mine_py_file(path: Path, rel: str, out: dict) -> None:
     text = path.read_text(encoding="utf-8", errors="replace")
 
-    for m in RE_AIO_COMMAND.finditer(text):
-        cmd = unquote_py(m.group(1)).lstrip("/")
-        out["commands"].append({"command": "/" + cmd, "source": f"{rel}:{line_of(text, m.start())}"})
+    for m in RE_AIO_CMD_CALL.finditer(text):
+        inner = balanced(text, m.end() - 1, "(", ")")
+        if not inner:
+            continue
+        for cmd in aiogram_command_names(inner[1:-1]):
+            out["commands"].append({"command": "/" + cmd.lstrip("/"),
+                                    "source": f"{rel}:{line_of(text, m.start())}"})
+    for m in RE_AIO_BOTCOMMAND.finditer(text):
+        out["commands"].append({"command": "/" + unquote_py(m.group(1)).lstrip("/"),
+                                "source": f"{rel}:{line_of(text, m.start())}"})
     for m in RE_AIO_COMMANDSTART.finditer(text):
         out["commands"].append({"command": "/start", "source": f"{rel}:{line_of(text, m.start())}"})
     for m in RE_AIO_FDATA.finditer(text):
@@ -402,6 +430,74 @@ def merge_maps(det: dict, llm: dict) -> dict:
     return out
 
 
+# --- i18n / locale mining (deterministic) -----------------------------------------
+
+# The reply TEXTS of i18n bots live in translation files, not in the handler code
+# (the handler holds only the message key: l10n.format_value("intro")). Mine those
+# files directly so scenarios can assert the bot's real strings.
+LOCALE_EXTS = (".ftl", ".po")
+RE_FTL_MSG = re.compile(r"^([a-zA-Z][\w-]*)\s*=(.*)$")
+RE_PO_MSGSTR = re.compile(r'^msgstr\s+"((?:\\.|[^"\\])*)"')
+RE_PO_CONT = re.compile(r'^"((?:\\.|[^"\\])*)"')
+
+
+def parse_ftl(text: str) -> list[str]:
+    """Fluent (.ftl) message values. A message is `id = value`, with indented
+    continuation lines; `.attr =` lines and `#` comments are skipped."""
+    out, lines, i = [], text.splitlines(), 0
+    while i < len(lines):
+        m = RE_FTL_MSG.match(lines[i])
+        if not m or lines[i].startswith((" ", "\t", "#", ".")):
+            i += 1
+            continue
+        parts = [m.group(2).strip()]
+        i += 1
+        while i < len(lines) and (lines[i].startswith((" ", "\t")) and lines[i].strip()
+                                  and not lines[i].lstrip().startswith(".")):
+            parts.append(lines[i].strip())
+            i += 1
+        value = "\n".join(p for p in parts if p).strip()
+        if value:
+            out.append(value)
+    return out
+
+
+def parse_po(text: str) -> list[str]:
+    """gettext (.po) msgstr values (non-empty), including multi-line continuations."""
+    out, lines, i = [], text.splitlines(), 0
+    while i < len(lines):
+        m = RE_PO_MSGSTR.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        parts = [m.group(1)]
+        i += 1
+        while i < len(lines):
+            c = RE_PO_CONT.match(lines[i].strip())
+            if not c:
+                break
+            parts.append(c.group(1))
+            i += 1
+        value = "".join(parts).replace("\\n", "\n").strip()
+        if value:
+            out.append(value)
+    return out
+
+
+def mine_locales(root: Path, source_dir: Path) -> list[dict]:
+    replies: list[dict] = []
+    for f in source_files(root, LOCALE_EXTS):
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        values = parse_ftl(text) if f.suffix == ".ftl" else parse_po(text)
+        rel = str(f.relative_to(source_dir))
+        for v in values:
+            replies.append({"text": v, "source": rel, "mined_by": "locale"})
+    return replies
+
+
 # --- orchestration ---------------------------------------------------------------
 
 JS_LIKE = {"node-telegram-bot-api", "grammy", "telegraf"}
@@ -451,6 +547,10 @@ def mine(source_dir: Path, framework: str | None = None, mode: str = "auto") -> 
     else:
         for f in source_files(scan_root, (".py",)):
             mine_py_file(f, str(f.relative_to(source_dir)), out)
+
+    # Reply texts of i18n bots live in translation files, not the handlers —
+    # deterministic, always run (even under --no-llm)
+    out["replies"].extend(mine_locales(scan_root, source_dir))
 
     if mode == "auto":
         try:

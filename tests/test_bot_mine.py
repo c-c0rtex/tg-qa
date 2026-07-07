@@ -169,6 +169,76 @@ def test_aiogram_commands(py_project):
     assert {c["command"] for c in m["commands"]} == {"/start", "/catalog"}
 
 
+def test_aiogram_command_forms(tmp_path):
+    # keyword-list form, positional multi, BotCommand declarations, prefix not captured
+    src = (
+        '@router.message(Command(commands=["start"]))\n'
+        '@router.message(Command(commands=["get", "who"]), F.reply_to_message)\n'
+        '@router.message(Command("ping", "p", ignore_case=True))\n'
+        '@router.message(Command("cfg", prefix="!"))\n'
+        'BotCommand(command="help", description="x")\n'
+    )
+    f = tmp_path / "h.py"
+    f.write_text(src)
+    out = {"commands": [], "callbacks": [], "keyboards": [], "replies": []}
+    bot_mine.mine_py_file(f, "h.py", out)
+    cmds = {c["command"] for c in out["commands"]}
+    assert {"/start", "/get", "/who", "/ping", "/p", "/cfg", "/help"} <= cmds
+    assert "/!" not in cmds and "/x" not in cmds        # prefix / description excluded
+
+
+def test_aiogram_command_names_helper():
+    assert bot_mine.aiogram_command_names('commands=["start", "get"]') == ["start", "get"]
+    assert bot_mine.aiogram_command_names('"ping", "p", ignore_case=True') == ["ping", "p"]
+    assert bot_mine.aiogram_command_names('"cfg", prefix="!"') == ["cfg"]
+    assert bot_mine.aiogram_command_names('commands="solo"') == ["solo"]
+
+
+def test_parse_ftl():
+    ftl = (
+        "# comment\n"
+        "sent = Сообщение отправлено!\n"
+        "intro =\n"
+        "    Привет ✌️\n"
+        "    Второй абзац\n"
+        "with-attr = Основной\n"
+        "    .attribute = не текст ответа\n"
+        "banned = ID { NUMBER($id) } заблокирован\n"
+    )
+    vals = bot_mine.parse_ftl(ftl)
+    assert "Сообщение отправлено!" in vals
+    assert "Привет ✌️\nВторой абзац" in vals
+    assert "Основной" in vals
+    assert not any("не текст ответа" in v for v in vals)   # .attr skipped
+
+
+def test_parse_po():
+    po = (
+        'msgid "greeting"\n'
+        'msgstr "Привет"\n'
+        '\n'
+        'msgid "empty"\n'
+        'msgstr ""\n'
+        'msgid "multi"\n'
+        'msgstr ""\n'
+        '"line1 "\n'
+        '"line2"\n'
+    )
+    vals = bot_mine.parse_po(po)
+    assert "Привет" in vals
+    assert "line1 line2" in vals
+    assert "" not in vals
+
+
+def test_mine_locales_adds_reply_texts(tmp_path):
+    loc = tmp_path / "locales" / "ru"
+    loc.mkdir(parents=True)
+    (loc / "strings.ftl").write_text("sent = Сообщение отправлено!\n", encoding="utf-8")
+    replies = bot_mine.mine_locales(tmp_path, tmp_path)
+    assert replies == [{"text": "Сообщение отправлено!",
+                        "source": "locales/ru/strings.ftl", "mined_by": "locale"}]
+
+
 def test_aiogram_callbacks_filters_and_factory(py_project):
     m = bot_mine.mine(py_project, mode="det")
     data = {c["data"] for c in m["callbacks"]}
