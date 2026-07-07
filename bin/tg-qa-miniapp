@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Resolve a bot's Mini App with live initData + emit the browser shim (web-qa bridge).
+set -e
+SKILL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+exec uv run --project "$SKILL" python "$SKILL/runners/miniapp.py" "$@"

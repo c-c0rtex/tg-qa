@@ -49,10 +49,25 @@ Pipeline (mirrors web-qa; executor is a Telegram **user session**, not a browser
 - `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-maintain --project <alias> [--dry-run]` — heal failing specs from the last
   run; a `PRODUCT-BUG:` verdict means the bot (not the spec) is wrong — report it, never
   weaken assertions.
+- `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-miniapp --project <alias> [--url <u>] [--emit script|json|url]`
+  — resolve the bot's Mini App with LIVE signed initData and emit the browser shim; feed
+  the full `webview_url` to web-qa's Playwright (the SDK reads initData from the URL hash),
+  or use `--emit script` as web-qa's `auth_init_data_cmd`.
 - `${CLAUDE_PLUGIN_ROOT}/bin/tg-qa-mcp --project <alias>` — MCP server, stdio; `--http --token …` for VPS
   daemon mode (see `deploy/`).
 - MCP tools (all accept optional `role`): `tg_me`, `tg_send`, `tg_click`, `tg_history`,
-  `tg_send_file`, `tg_download_media`, `tg_bot_commands`, `tg_webview_url`.
+  `tg_send_media` (photo/voice/video_note/sticker/…), `tg_download_media`,
+  `tg_bot_commands`, `tg_webview_url`.
+
+## Media & Mini Apps
+
+- Send any media in a spec step or via `tg_send_media`: `photo | document | voice (гс) |
+  video_note (кружок) | sticker | video | audio | gif | auto`. The caller supplies a file
+  fitting the kind (voice→.ogg, video_note→square .mp4, sticker→.webp/.tgs).
+- Mini App testing is web-qa's job; tg-qa is the bridge. `tg-qa-miniapp` fetches a fresh,
+  correctly-signed initData (short-lived — always resolve per run, never store) and the
+  SDK initialises natively when Playwright loads the full `webview_url`. The emitted
+  `init_script` is a fallback shim for apps that read `window.Telegram.WebApp` directly.
 
 ## Rules
 

@@ -59,7 +59,8 @@ CONFIG_SKELETON = {
     "fixture_cmd": None,       # shell cmd seeding deterministic data before a run
     "fixture_teardown_cmd": None,
     "context_notes": None,     # free-form notes for generation agents
-    "miniapp_url": None,       # Mini App URL for the web-qa bridge (v0.2)
+    "miniapp_url": None,       # Mini App URL — tg-qa-miniapp resolves it with live initData
+    "miniapp_platform": None,  # platform reported to the Mini App SDK (default "web")
 }
 
 
