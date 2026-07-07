@@ -30,8 +30,14 @@ class DriverError(Exception):
 
 def format_button(btn) -> dict:
     info = {"text": btn.text}
-    if getattr(btn, "url", None):
-        info["url"] = btn.url
+    # MessageButton.url covers only KeyboardButtonUrl; a Mini App button
+    # (KeyboardButtonWebView) hides its url in the raw TL object underneath
+    raw = getattr(btn, "button", btn)
+    url = getattr(btn, "url", None) or getattr(raw, "url", None)
+    if url:
+        info["url"] = url
+    if type(raw).__name__ == "KeyboardButtonWebView":
+        info["web_app"] = True
     if getattr(btn, "data", None):
         info["data"] = btn.data.decode("utf-8", errors="replace")
     return info
