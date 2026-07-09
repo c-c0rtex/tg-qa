@@ -70,7 +70,7 @@ user session (.session) ◀──core/driver.py──▶ Telegram ◀──run�
 As a Claude Code plugin (from inside Claude Code):
 
 ```
-/plugin marketplace add https://codeberg.org/c-c0rtex/web-qa
+/plugin marketplace add https://codeberg.org/c-c0rtex/web-qa.git
 /plugin install tg-qa@c-c0rtex
 ```
 
