@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://ci.codeberg.org/api/badges/c-c0rtex/tg-qa/status.svg" alt="CI">
+  <img src="https://img.shields.io/github/actions/workflow/status/c-c0rtex/tg-qa/ci.yml?style=flat-square&label=CI" alt="CI">
   <img src="https://img.shields.io/badge/version-0.1.0-blue?style=flat-square" alt="Version 0.1.0">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+">
@@ -19,7 +19,7 @@ Autonomous Telegram-bot QA for [Claude Code](https://claude.com/claude-code): dr
 dialogs with a bot through a user account (Telethon/MTProto), snapshot-test replies and
 inline keyboards, generate scenarios and specs from the bot's **source code**, and run
 the whole matrix without spending LLM tokens. Sister project of
-[web-qa](https://codeberg.org/c-c0rtex/web-qa) — same pipeline, different executor.
+[web-qa](https://github.com/c-c0rtex/web-qa) — same pipeline, different executor.
 
 > Status: v0.1 — the full pipeline (mine → generate → spec-gen → run → maintain), the
 > MCP server, session tooling and the Mini App bridge are implemented and dogfooded on
@@ -30,11 +30,11 @@ the whole matrix without spending LLM tokens. Sister project of
 Want to see it run before installing? Two worked examples, each with a pinned upstream bot,
 committed test state and real reports:
 
-- **[tg-qa-demo](https://codeberg.org/c-c0rtex/tg-qa-demo)** — [Telebook](https://github.com/neSpecc/telebook)
+- **[tg-qa-demo](https://github.com/c-c0rtex/tg-qa-demo)** — [Telebook](https://github.com/neSpecc/telebook)
   (node-telegram-bot-api): a **Mini App** bot with **Telegram Stars** payments. Shows the
   initData bridge running the real Vue app in headless chromium, and bot-dialog snapshots
   (7/7).
-- **[tg-qa-feedback-demo](https://codeberg.org/c-c0rtex/tg-qa-feedback-demo)** — MasterGroosha's
+- **[tg-qa-feedback-demo](https://github.com/c-c0rtex/tg-qa-feedback-demo)** — MasterGroosha's
   feedback bot (aiogram 3, Fluent i18n): a **bot-centric** demo exercising **media, stickers
   and voice** — voice/photo confirmed, sticker/video-note rejected as unsupported (6/6). This
   bot drove the aiogram source-miner and i18n-locale mining features.
@@ -70,7 +70,7 @@ user session (.session) ◀──core/driver.py──▶ Telegram ◀──run�
 As a Claude Code plugin (from inside Claude Code):
 
 ```
-/plugin marketplace add https://codeberg.org/c-c0rtex/web-qa.git
+/plugin marketplace add c-c0rtex/web-qa
 /plugin install tg-qa@c-c0rtex
 ```
 
@@ -82,7 +82,7 @@ plugin updates.
 Or as a plain skill:
 
 ```bash
-git clone https://codeberg.org/c-c0rtex/tg-qa ~/.claude/skills/tg-qa
+git clone https://github.com/c-c0rtex/tg-qa ~/.claude/skills/tg-qa
 cd ~/.claude/skills/tg-qa
 uv sync                       # optional — the bin/ wrappers do this on first run
 cp projects.example.json projects.json   # then edit, or use tg-qa-register-project
@@ -140,4 +140,4 @@ uv run pytest -q        # unit tests, no Telegram needed
 ## License
 
 MIT — see [LICENSE](LICENSE). If tg-qa saves you time, a link back to
-[c-c0rtex](https://codeberg.org/c-c0rtex) is appreciated.
+[c-c0rtex](https://github.com/c-c0rtex) is appreciated.
